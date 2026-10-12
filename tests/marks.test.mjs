@@ -64,3 +64,11 @@ test("khớp đa thức bậc ba khôi phục méo dạng thùng (theo bán kín
     assert.ok(Math.abs(dx - tx) < 0.5 && Math.abs(dy - ty) < 0.5, `${dx},${dy} vs ${tx},${ty}`);
   }
 });
+
+test("ngưỡng ô: ô trống độ đen 0.2 không bị tô vàng, ô tô đậm vẫn rõ", async () => {
+  const { classify, BLANK, CLEAR, UNCERTAIN } = await import("../lib/grading.js");
+  const labels = ["A", "B", "C", "D"];
+  assert.equal(classify([0.2, 0.12, 0.1, 0.11], labels).status, BLANK);
+  assert.equal(classify([0.6, 0.12, 0.1, 0.11], labels).status, CLEAR);
+  assert.equal(classify([0.3, 0.12, 0.1, 0.11], labels).status, UNCERTAIN);
+});
