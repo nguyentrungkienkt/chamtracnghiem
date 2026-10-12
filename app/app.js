@@ -110,22 +110,13 @@ function renderCham(session) {
   h(`<div class="row between"><button id="btn-pick">Đổi phiên</button><span class="muted">${esc(session.name)}</span></div><div id="scan-root"></div>`);
   document.getElementById("btn-pick").onclick = () => { state.session = null; render(); };
   const root = document.getElementById("scan-root");
-  const showLoading = (text = "") => {
-    root.innerHTML = `<div class="card muted">Đang nạp bộ xử lý ảnh… ${esc(text)}<br>Lần đầu cần tải khoảng 10 MB.</div>`;
-  };
-  showLoading("");
-  loadCv((text) => showLoading(text)).then((cv) => {
-    root.innerHTML = "";
-    const ctl = mountScan(root, {
-      cv, session,
-      onSaved: () => {},
-      onOpenReview: (id) => { stopScan && stopScan(); openReview(session, id); },
-    });
-    stopScan = ctl.stop;
-  }).catch((e) => {
-    root.innerHTML = `<div class="err">${esc(e.message)}</div><button class="primary big" id="cv-retry">Thử lại</button>`;
-    root.querySelector("#cv-retry").onclick = () => renderCham(session);
+  root.innerHTML = "";
+  const ctl = mountScan(root, {
+    loadCv, session,
+    onSaved: () => {},
+    onOpenReview: (id) => { stopScan && stopScan(); openReview(session, id); },
   });
+  stopScan = ctl.stop;
 }
 
 function openReview(session, sheetId) {

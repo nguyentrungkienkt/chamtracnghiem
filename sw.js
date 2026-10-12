@@ -1,5 +1,5 @@
 // Lưu toàn bộ vỏ ứng dụng để mở được khi mất mạng. Mã nguồn mới được tải khi có mạng.
-const CACHE = "chamtn-v4";
+const CACHE = "chamtn-v5";
 const SHELL = [
   "./", "./index.html", "./styles.css", "./manifest.webmanifest", "./icon.svg",
   "./app/app.js", "./app/db.js", "./app/shared.js", "./app/templates.js", "./app/omr.js",

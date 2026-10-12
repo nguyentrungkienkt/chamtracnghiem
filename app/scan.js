@@ -11,8 +11,8 @@ const STABLE_MS = 3000;       // phiếu đứng yên bao lâu thì tự chụp
 const MOVE_PX = 8;            // dịch chuyển góc tối đa (px, trên ảnh xem trước) vẫn tính là đứng yên
 const TICK_MS = 200;          // chu kỳ phân tích khung hình
 
-export function mountScan(root, { cv, session, onSaved, onOpenReview }) {
-  let stream = null, timer = null, busy = false, lastCorners = null, stableSince = 0, tpl = null;
+export function mountScan(root, { loadCv, session, onSaved, onOpenReview }) {
+  let stream = null, timer = null, busy = false, lastCorners = null, stableSince = 0, tpl = null, cv = null;
   let code = session.codes[0];
   const video = document.createElement("video");
   video.setAttribute("playsinline", ""); video.muted = true; video.autoplay = true;
@@ -43,6 +43,17 @@ export function mountScan(root, { cv, session, onSaved, onOpenReview }) {
   function status(text) { statusEl.textContent = text; }
 
   async function start() {
+    // OpenCV.js chỉ nạp khi bấm Bật camera, để các tab khác vẫn dùng được.
+    if (!cv) {
+      status("Đang nạp bộ xử lý ảnh…");
+      try {
+        cv = await loadCv((t) => status(`Đang nạp bộ xử lý ảnh… ${t}`));
+      } catch (e) {
+        say(e.message, "err");
+        return;
+      }
+      status("Bộ xử lý ảnh đã sẵn sàng");
+    }
     try {
       tpl = tpl || (await getTemplate(session.template));
       stream = await navigator.mediaDevices.getUserMedia({
