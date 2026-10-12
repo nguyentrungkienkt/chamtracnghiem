@@ -7,6 +7,12 @@ import { findKeys } from "../lib/answer-key.js";
 import { grayToCanvas, canvasToBlob } from "./render.js";
 import { sheets, newId } from "./db.js";
 import { getTemplate } from "./templates.js";
+import { CURL_WARN } from "./omr.js";
+
+// Ghi chú độ cong: báo lùi máy ra xa khi phiếu cong nhiều
+const curlNote = (res) => (res.dev >= CURL_WARN
+  ? `phiếu cong ${res.dev.toFixed(1)} px, lùi máy ra xa và để phẳng rồi chụp lại`
+  : `nắn theo ${res.marks} ô vuông, độ cong ${res.dev.toFixed(1)} px`);
 import { fmt } from "./shared.js";
 
 const PREVIEW_W = 480;        // ảnh xem trước để dò góc nhanh
@@ -221,9 +227,9 @@ export function mountScan(root, { session, onSaved }) {
       const alignedBlob = await canvasToBlob(alignedCanvas, 0.9);
       const sheet = await gradeAndSave({ tpl, darkness: res.darkness, alignedBlob, photoBlob, k: res.k });
       if (sheet.status === "GRADED") {
-        say(`Đã chấm mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm · nắn theo ${res.marks} ô vuông`, "ok");
+        say(`Đã chấm mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm · ${curlNote(res)}`, "ok");
       } else {
-        say(`Mã ${sheet.code === "?" ? "chưa đọc được" : sheet.code}: cần xem lại (nắn theo ${res.marks} ô vuông). Xem trong tab Bài.`, "err");
+        say(`Mã ${sheet.code === "?" ? "chưa đọc được" : sheet.code}: cần xem lại · ${curlNote(res)}. Xem trong tab Bài.`, "err");
       }
       status("Đưa phiếu tiếp theo cho 4 ô vuông khớp khung");
       onSaved && onSaved(sheet);
