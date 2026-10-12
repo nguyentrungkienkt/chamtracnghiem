@@ -47,3 +47,7 @@ ul { padding-left: 20px; }
 .cam video { display: block; width: 100%; height: auto; }
 .cam .status { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.6); color: #fff; font-size: 14px; text-align: center; }
 .status { font-size: 15px; }
+.guides { position: absolute; top: 10%; left: 50%; height: 80%; transform: translateX(-50%); border: 1px dashed rgba(255,255,255,.45); pointer-events: none; }
+.gmark { position: absolute; width: 8%; aspect-ratio: 1; transform: translate(-50%, -50%); border: 3px solid #fff; border-radius: 4px; background: rgba(255,255,255,.12); }
+.guides.near .gmark { border-color: var(--warn-bright, #f5b400); background: rgba(245,180,0,.18); }
+.guides.ok .gmark { border-color: #3ddc84; background: rgba(61,220,132,.3); }
