@@ -250,9 +250,11 @@ function forcedOrient(cv, small, tpl, k) {
 // Sau khi nắn theo 4 góc, mỗi ô vuông mẫu (tpl.marks) được ghép với ô vuông tìm thấy gần nhất.
 // Độ lệch được khớp bằng đa thức bậc hai (6 hệ số cho mỗi trục), rồi ảnh được lấy mẫu lại.
 export const MARK_SEARCH_DIST = 30;  // tìm ô vuông gần mốc trong bán kính này (đủ rộng để chứa độ cong)
-export const MARK_TRACK_DIST = 6;    // sau khi khớp, chỉ nhận ô vuông nằm trong bán kính này quanh vị trí dự đoán
+export const MARK_TRACK_DIST = 6;    // sau khi khớp, chỉ nhận ô vuông nằm trong bán kính này quanh vị trí dự đoán (lượt đầu)
+export const MARK_TRACK_WIDE = 10;   // các lượt sau: mô hình đã tốt hơn nên nhận ô vuông lệch tới bán kính này (mốc khác cách >100 px, không nhầm)
+export const MARK_TRACK_ROUNDS = 3;  // số lượt bám lại và nội suy lại
 export const MARK_MAX_SHIFT = 20;    // độ lệch tối đa cho phép ở mọi điểm (px)
-export const MARK_MIN_PAIRS = 16;    // ít hơn số này thì giữ nguyên ảnh đã nắn 4 góc (đa thức bậc ba có 10 hệ số)
+export const MARK_MIN_PAIRS = 16;    // ít hơn số này thì giữ nguyên ảnh đã nắn 4 góc (cần đủ mốc để nội suy ổn định)
 export const RESID_WARN = 2.5;       // sai số còn lại sau khi nắn (px) từ mức này trở lên: báo chụp lại
 
 // Ghép từng mốc với ô vuông gần nhất. Trả về [{x, y, dx, dy}] với (dx, dy) = vị trí thấy - vị trí mẫu.
@@ -270,30 +272,22 @@ export function matchMarks(squares, marks, maxDist = MARK_SEARCH_DIST) {
 }
 
 // Bám lại: với mỗi mốc, tìm ô vuông gần vị trí đã được mô hình dự đoán
-function trackPairs(squares, anchors, fit, w, h) {
+export function trackPairs(squares, anchors, warp, maxDist = MARK_TRACK_DIST) {
   const pairs = [];
   for (const [x, y] of anchors) {
-    const [dx, dy] = displacementAt(fit, x, y, w, h);
+    const [dx, dy] = warpAt(warp, x, y);
     const px = x + dx, py = y + dy;
     let best = null, bd = Infinity;
     for (const s of squares) {
       const d = Math.hypot(s.x - px, s.y - py);
       if (d < bd) { bd = d; best = s; }
     }
-    if (best && bd <= MARK_TRACK_DIST) pairs.push({ x, y, dx: best.x - x, dy: best.y - y });
+    if (best && bd <= maxDist) pairs.push({ x, y, dx: best.x - x, dy: best.y - y });
   }
   return pairs;
 }
 
-// Cơ sở đa thức bậc ba, chuẩn hóa theo kích thước khung chuẩn.
-// Méo của ống kính góc rộng có dạng bậc ba theo bán kính, nên bậc hai không đủ.
-const NB = 10;
-function polyBasis(x, y, w, h) {
-  const u = x / w, v = y / h;
-  return [1, u, v, u * u, u * v, v * v, u * u * u, u * u * v, u * v * v, v * v * v];
-}
-
-// Giải hệ 6x6 bằng khử Gauss có chọn phần tử trội
+// Giải hệ phương trình tuyến tính bằng khử Gauss có chọn phần tử trội
 function solveLinear(A, b) {
   const n = b.length;
   const M = A.map((row, i) => [...row, b[i]]);
@@ -311,34 +305,64 @@ function solveLinear(A, b) {
   return M.map((row, i) => row[n] / (row[i] || 1e-12));
 }
 
-// Hệ số đa thức của độ lệch theo x và theo y
-export function fitDisplacement(pairs, w, h) {
-  const A = Array.from({ length: NB }, () => new Array(NB).fill(0));
-  const bx = new Array(NB).fill(0), by = new Array(NB).fill(0);
-  for (const p of pairs) {
-    const f = polyBasis(p.x, p.y, w, h);
-    for (let i = 0; i < NB; i++) {
-      for (let j = 0; j < NB; j++) A[i][j] += f[i] * f[j];
-      bx[i] += f[i] * p.dx;
-      by[i] += f[i] * p.dy;
+// Nội suy độ lệch bằng mặt mỏng (thin-plate spline): đi đúng qua từng mốc, giữa các mốc thì mượt.
+// Khác đa thức toàn trang: một chỗ giấy cong cục bộ không kéo lệch cả trang.
+const TPS_LAMBDA = 1e-6;     // độ trơn rất nhỏ: gần như đi qua đúng các mốc
+const WARP_GRID = 8;         // khoảng cách (px khung chuẩn) giữa các nút tính độ lệch, nội suy tuyến tính giữa các nút
+const tpsKernel = (r2) => (r2 > 0 ? r2 * Math.log(r2) : 0);
+
+// pairs: [{x, y, dx, dy}] trên khung chuẩn. Trả về mô hình dùng với warpAt.
+export function fitWarp(pairs, w, h) {
+  const n = pairs.length, N = n + 3;
+  const u = pairs.map((p) => p.x / w), v = pairs.map((p) => p.y / h);
+  const A = Array.from({ length: N }, () => new Array(N).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const r2 = (u[i] - u[j]) ** 2 + (v[i] - v[j]) ** 2;
+      A[i][j] = tpsKernel(r2) + (i === j ? TPS_LAMBDA : 0);
     }
+    A[i][n] = A[n][i] = 1;
+    A[i][n + 1] = A[n + 1][i] = u[i];
+    A[i][n + 2] = A[n + 2][i] = v[i];
   }
-  for (let i = 0; i < NB; i++) A[i][i] += 1e-6;   // ổn định khi số điểm ít
-  return { cx: solveLinear(A, bx), cy: solveLinear(A, by) };
+  const bx = [...pairs.map((p) => p.dx), 0, 0, 0];
+  const by = [...pairs.map((p) => p.dy), 0, 0, 0];
+  return { u, v, w, h, n, sx: solveLinear(A, bx), sy: solveLinear(A, by) };
 }
 
-// Độ lệch tại một điểm, bị chặn trong MARK_MAX_SHIFT
-export function displacementAt(fit, x, y, w, h) {
-  const f = polyBasis(x, y, w, h);
-  const clamp = (v) => Math.max(-MARK_MAX_SHIFT, Math.min(MARK_MAX_SHIFT, v));
-  let dx = 0, dy = 0;
-  for (let i = 0; i < NB; i++) { dx += fit.cx[i] * f[i]; dy += fit.cy[i] * f[i]; }
+// Độ lệch tại một điểm khung chuẩn, bị chặn trong MARK_MAX_SHIFT
+export function warpAt(m, x, y) {
+  const u = x / m.w, v = y / m.h;
+  let dx = m.sx[m.n] + m.sx[m.n + 1] * u + m.sx[m.n + 2] * v;
+  let dy = m.sy[m.n] + m.sy[m.n + 1] * u + m.sy[m.n + 2] * v;
+  for (let i = 0; i < m.n; i++) {
+    const k = tpsKernel((u - m.u[i]) ** 2 + (v - m.v[i]) ** 2);
+    dx += m.sx[i] * k;
+    dy += m.sy[i] * k;
+  }
+  const clamp = (t) => Math.max(-MARK_MAX_SHIFT, Math.min(MARK_MAX_SHIFT, t));
   return [clamp(dx), clamp(dy)];
 }
 
-// Nắn lại ảnh đã nắn 4 góc theo các ô vuông đen phụ. Trả về {aligned, used, dev}; thiếu điểm thì giữ nguyên.
+// Sai số dự đoán: mỗi mốc được đoán từ các mốc còn lại, lấy căn trung bình bình phương (px).
+// Mốc khớp với mô hình thì nhỏ; mốc lệch cục bộ hoặc khớp nhầm thì lớn.
+export function looResidual(pairs, w, h) {
+  if (pairs.length < 4) return 0;
+  let se = 0;
+  pairs.forEach((p, i) => {
+    const m = fitWarp(pairs.filter((_, j) => j !== i), w, h);
+    const [fx, fy] = warpAt(m, p.x, p.y);
+    se += (fx - p.dx) ** 2 + (fy - p.dy) ** 2;
+  });
+  return Math.sqrt(se / pairs.length);
+}
+
+
+// Nắn lại ảnh đã nắn 4 góc theo các ô vuông đen phụ. Trả về {aligned, used, dev, residual}.
+// Thiếu mốc thì giữ nguyên ảnh đã nắn 4 góc (residual = null).
 function refineWithMarks(cv, aligned, tpl) {
   if (!tpl.marks || !tpl.marks.length) return { aligned, used: 0, dev: 0, residual: null };
+  const w = tpl.ref_w, h = tpl.ref_h;
   const anchors = [...tpl.marks, ...Object.values(tpl.fiducials)];
   const squares = candidateSquares(cv, aligned);
   const wide = matchMarks(squares, anchors, MARK_SEARCH_DIST);
@@ -347,44 +371,49 @@ function refineWithMarks(cv, aligned, tpl) {
   for (const p of wide) sq0 += p.dx * p.dx + p.dy * p.dy;
   const dev = wide.length ? Math.sqrt(sq0 / wide.length) : 0;
   if (wide.length < MARK_MIN_PAIRS) return { aligned, used: wide.length, dev, residual: null };
-  // lượt 1 khớp mô hình theo mọi ô tìm được, lượt 2 bám lại quanh vị trí dự đoán
+  // lượt đầu nội suy theo mọi ô tìm được; các lượt sau chỉ nhận ô nằm gần dự đoán và nội suy lại
   let pairs = wide;
-  let fit = fitDisplacement(wide, tpl.ref_w, tpl.ref_h);
-  const tracked = trackPairs(squares, anchors, fit, tpl.ref_w, tpl.ref_h);
-  if (tracked.length >= MARK_MIN_PAIRS) {
+  let warp = fitWarp(wide, w, h);
+  for (let round = 0; round < MARK_TRACK_ROUNDS; round++) {
+    const tol = round === 0 ? MARK_TRACK_DIST : MARK_TRACK_WIDE;
+    const tracked = trackPairs(squares, anchors, warp, tol);
+    if (tracked.length < MARK_MIN_PAIRS) break;
     pairs = tracked;
-    fit = fitDisplacement(tracked, tpl.ref_w, tpl.ref_h);
+    warp = fitWarp(tracked, w, h);
   }
-  let se = 0;   // sai số còn lại tại các ô vuông sau khi khớp
-  for (const p of pairs) {
-    const [fx, fy] = displacementAt(fit, p.x, p.y, tpl.ref_w, tpl.ref_h);
-    se += (p.dx - fx) ** 2 + (p.dy - fy) ** 2;
-  }
-  const residual = Math.sqrt(se / pairs.length);
-  const { cx, cy } = fit;
-  const w = aligned.cols, h = aligned.rows;
-
-  const mapX = new Float32Array(w * h), mapY = new Float32Array(w * h);
-  for (let y = 0; y < h; y++) {
-    const v = y / tpl.ref_h;
-    for (let x = 0; x < w; x++) {
-      const u = x / tpl.ref_w;
-      const uu = u * u, uv = u * v, vv = v * v;
-      const uuu = uu * u, uuv = uu * v, uvv = u * vv, vvv = vv * v;
-      let dx = cx[0] + cx[1] * u + cx[2] * v + cx[3] * uu + cx[4] * uv + cx[5] * vv + cx[6] * uuu + cx[7] * uuv + cx[8] * uvv + cx[9] * vvv;
-      let dy = cy[0] + cy[1] * u + cy[2] * v + cy[3] * uu + cy[4] * uv + cy[5] * vv + cy[6] * uuu + cy[7] * uuv + cy[8] * uvv + cy[9] * vvv;
-      dx = dx > MARK_MAX_SHIFT ? MARK_MAX_SHIFT : dx < -MARK_MAX_SHIFT ? -MARK_MAX_SHIFT : dx;
-      dy = dy > MARK_MAX_SHIFT ? MARK_MAX_SHIFT : dy < -MARK_MAX_SHIFT ? -MARK_MAX_SHIFT : dy;
-      mapX[y * w + x] = x + dx;
-      mapY[y * w + x] = y + dy;
-    }
-  }
-  const map1 = new cv.Mat(h, w, cv.CV_32FC1), map2 = new cv.Mat(h, w, cv.CV_32FC1);
+  const residual = looResidual(pairs, w, h);
+  const { mapX, mapY } = buildMap(warp, aligned.cols, aligned.rows);
+  const map1 = new cv.Mat(aligned.rows, aligned.cols, cv.CV_32FC1), map2 = new cv.Mat(aligned.rows, aligned.cols, cv.CV_32FC1);
   map1.data32F.set(mapX); map2.data32F.set(mapY);
   const out = new cv.Mat();
   cv.remap(aligned, out, map1, map2, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
   map1.delete(); map2.delete(); aligned.delete();
   return { aligned: out, used: pairs.length, dev, residual };
+}
+
+// Bản đồ lấy mẫu: độ lệch tính ở các nút lưới cách WARP_GRID px, nội suy tuyến tính giữa các nút.
+function buildMap(warp, w, h) {
+  const G = WARP_GRID;
+  const nx = Math.ceil(w / G) + 1, ny = Math.ceil(h / G) + 1;
+  const gx = new Float32Array(nx * ny), gy = new Float32Array(nx * ny);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const [dx, dy] = warpAt(warp, i * G, j * G);
+      gx[j * nx + i] = dx; gy[j * nx + i] = dy;
+    }
+  }
+  const mapX = new Float32Array(w * h), mapY = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const fy = y / G, j = Math.min(ny - 2, Math.floor(fy)), ty = fy - j;
+    for (let x = 0; x < w; x++) {
+      const fx = x / G, i = Math.min(nx - 2, Math.floor(fx)), tx = fx - i;
+      const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+      const wa = (1 - tx) * (1 - ty), wb = tx * (1 - ty), wc = (1 - tx) * ty, wd = tx * ty;
+      mapX[y * w + x] = x + wa * gx[a] + wb * gx[b] + wc * gx[c] + wd * gx[d];
+      mapY[y * w + x] = y + wa * gy[a] + wb * gy[b] + wc * gy[c] + wd * gy[d];
+    }
+  }
+  return { mapX, mapY };
 }
 
 // Đọc toàn bộ phiếu: nhận ảnh xám full-res, trả về { aligned (Mat 1656x2344 xám), darkness, k, f }.

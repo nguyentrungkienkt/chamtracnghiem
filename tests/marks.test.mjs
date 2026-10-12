@@ -1,11 +1,22 @@
-// Chạy: npm test. Kiểm tra nắn theo ô vuông đen phụ (app/omr.js) với độ lệch tổng hợp.
+// Chạy: npm test. Kiểm tra nắn theo ô vuông đen phụ (app/omr.js): khớp mốc, nội suy độ lệch, ngưỡng ô.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { matchMarks, fitDisplacement, displacementAt, MARK_MAX_SHIFT } from "../app/omr.js";
+import {
+  matchMarks, fitWarp, warpAt, trackPairs, looResidual,
+  MARK_MAX_SHIFT, MARK_TRACK_DIST, MARK_TRACK_WIDE, MARK_MIN_PAIRS,
+} from "../app/omr.js";
+import { classify, BLANK, CLEAR, UNCERTAIN } from "../lib/grading.js";
 
 const TPL = JSON.parse(readFileSync(new URL("../lib/templates.json", import.meta.url), "utf8")).templates.find((t) => t.id === 2);
 const W = TPL.ref_w, H = TPL.ref_h;
+const anchors = [...TPL.marks, ...Object.values(TPL.fiducials)];
+
+// Tạo các cặp (mốc, vị trí thấy) từ một hàm độ lệch thật
+const pairsFrom = (truth, extra = () => [0, 0]) => anchors.map(([x, y]) => {
+  const [a, b] = truth(x, y), [c, d] = extra(x, y);
+  return { x, y, dx: a + c, dy: b + d };
+});
 
 test("mẫu có 27 ô vuông phụ và 108 mục", () => {
   assert.equal(TPL.marks.length, 27);
@@ -20,53 +31,80 @@ test("ghép mốc với ô vuông gần nhất và bỏ ô quá xa", () => {
   assert.deepEqual([pairs[0].dx, pairs[0].dy], [3, -2]);
 });
 
-test("khớp đa thức bậc hai khôi phục độ lệch đã tạo", () => {
-  // độ lệch thật: cong nhẹ theo kiểu ống kính
-  const truth = (x, y) => [
-    4 * Math.sin((x / W) * Math.PI) + 2 * (y / H),
-    -3 * (x / W - 0.5) * (x / W - 0.5) * 4 + 1.5 * Math.cos((y / H) * Math.PI),
-  ];
-  const pairs = TPL.marks.map(([x, y]) => {
-    const [dx, dy] = truth(x, y);
-    return { x, y, dx, dy };
-  });
-  const fit = fitDisplacement(pairs, W, H);
-  for (const [x, y] of [[300, 400], [1200, 1800], [800, 1100]]) {
-    const [dx, dy] = displacementAt(fit, x, y, W, H);
-    const [tx, ty] = truth(x, y);
-    assert.ok(Math.abs(dx - tx) < 0.8, `dx ${dx} vs ${tx}`);
-    assert.ok(Math.abs(dy - ty) < 0.8, `dy ${dy} vs ${ty}`);
+test("nội suy đi đúng qua từng mốc", () => {
+  const truth = (x, y) => [4 * Math.sin((x / W) * Math.PI), 2 + 6 * (y / H) * (y / H)];
+  const pairs = pairsFrom(truth);
+  const m = fitWarp(pairs, W, H);
+  for (const p of pairs) {
+    const [dx, dy] = warpAt(m, p.x, p.y);
+    assert.ok(Math.abs(dx - p.dx) < 0.01 && Math.abs(dy - p.dy) < 0.01);
   }
 });
 
-test("độ lệch bị chặn trong giới hạn", () => {
-  const pairs = TPL.marks.map(([x, y]) => ({ x, y, dx: 200, dy: -200 }));
-  const fit = fitDisplacement(pairs, W, H);
-  const [dx, dy] = displacementAt(fit, 800, 1100, W, H);
-  assert.ok(Math.abs(dx) <= MARK_MAX_SHIFT && Math.abs(dy) <= MARK_MAX_SHIFT);
+test("trường cong trơn: nội suy đúng giữa các mốc", () => {
+  const truth = (x, y) => [4 * Math.sin((x / W) * Math.PI) + 2 * (y / H), -3 * (x / W - 0.5) ** 2 * 4 + 1.5 * Math.cos((y / H) * Math.PI)];
+  const m = fitWarp(pairsFrom(truth), W, H);
+  for (const [x, y] of [[300, 400], [1200, 1800], [800, 1100], [200, 2000]]) {
+    const [dx, dy] = warpAt(m, x, y);
+    const [tx, ty] = truth(x, y);
+    assert.ok(Math.abs(dx - tx) < 0.8 && Math.abs(dy - ty) < 0.8, `${dx},${dy} vs ${tx},${ty}`);
+  }
 });
 
-test("khớp đa thức bậc ba khôi phục méo dạng thùng (theo bán kính)", () => {
+test("méo dạng thùng: nội suy đúng ở các vùng trong sheet", () => {
   const cx0 = W / 2, cy0 = H / 2, R = Math.hypot(cx0, cy0);
-  const k = 0.002;  // méo thùng: độ lệch tăng theo r³ (ở góc khoảng 10 px)
+  const k = 0.002;
   const truth = (x, y) => {
     const dxr = x - cx0, dyr = y - cy0, r2 = (dxr * dxr + dyr * dyr) / (R * R);
     return [-dxr * k * r2 * 6, -dyr * k * r2 * 6];
   };
-  const pairs = TPL.marks.map(([x, y]) => {
-    const [dx, dy] = truth(x, y);
-    return { x, y, dx, dy };
-  });
-  const fit = fitDisplacement(pairs, W, H);
+  const m = fitWarp(pairsFrom(truth), W, H);
   for (const [x, y] of [[200, 300], [1400, 1900], [830, 1170]]) {
-    const [dx, dy] = displacementAt(fit, x, y, W, H);
+    const [dx, dy] = warpAt(m, x, y);
     const [tx, ty] = truth(x, y);
-    assert.ok(Math.abs(dx - tx) < 0.5 && Math.abs(dy - ty) < 0.5, `${dx},${dy} vs ${tx},${ty}`);
+    // nội suy mặt mỏng sai khoảng 1 px ở vùng xa mốc với méo bậc ba: chấp nhận được so với lệch cục bộ 8 px
+    assert.ok(Math.abs(dx - tx) < 1.5 && Math.abs(dy - ty) < 1.5, `${dx},${dy} vs ${tx},${ty}`);
   }
 });
 
-test("ngưỡng ô: ô trống độ đen 0.2 không bị tô vàng, ô tô đậm vẫn rõ", async () => {
-  const { classify, BLANK, CLEAR, UNCERTAIN } = await import("../lib/grading.js");
+test("độ lệch bị chặn trong giới hạn", () => {
+  const m = fitWarp(anchors.map(([x, y]) => ({ x, y, dx: 200, dy: -200 })), W, H);
+  const [dx, dy] = warpAt(m, 800, 1100);
+  assert.ok(Math.abs(dx) <= MARK_MAX_SHIFT && Math.abs(dy) <= MARK_MAX_SHIFT);
+});
+
+test("mốc lệch cục bộ 8 px ở mép dưới: nội suy đúng tại mốc đó, không kéo lệch cả trang", () => {
+  const truth = (x, y) => [1.5 * Math.sin((x / W) * Math.PI), 2 + 6 * (y / H) * (y / H)];
+  const bump = (x, y) => (x > 1300 && y > 2200 ? [0, 8] : [0, 0]);
+  const pairs = pairsFrom(truth, bump);
+  const m = fitWarp(pairs, W, H);
+  const [, fy] = warpAt(m, 1338, 2282);
+  assert.ok(Math.abs(fy - (truth(1338, 2282)[1] + 8)) < 0.05, `dy ${fy}`);
+  const [, far] = warpAt(m, 300, 400);
+  assert.ok(Math.abs(far - truth(300, 400)[1]) < 1.0, `xa mốc: ${far}`);
+});
+
+test("bám lại với mô hình nội suy: mốc lệch 8 px vẫn được nhận", () => {
+  const truth = (x, y) => [1.5 * Math.sin((x / W) * Math.PI), 2 + 6 * (y / H) * (y / H)];
+  const bump = (x, y) => (x > 1300 && y > 2200 ? [0, 8] : [0, 0]);
+  const squares = pairsFrom(truth, bump).map((p) => ({ x: p.x + p.dx, y: p.y + p.dy }));
+  const wide = matchMarks(squares, anchors, 30);
+  let warp = fitWarp(wide, W, H);
+  let tracked = trackPairs(squares, anchors, warp, MARK_TRACK_DIST);
+  warp = fitWarp(tracked, W, H);
+  tracked = trackPairs(squares, anchors, warp, MARK_TRACK_WIDE);
+  assert.ok(tracked.length >= MARK_MIN_PAIRS && tracked.length === anchors.length, `dùng được ${tracked.length}`);
+});
+
+test("sai số dự đoán: trường trơn thì nhỏ, có mốc lệch cục bộ thì lớn hơn", () => {
+  const truth = (x, y) => [1.5 * Math.sin((x / W) * Math.PI), 2 + 6 * (y / H) * (y / H)];
+  const smooth = looResidual(pairsFrom(truth), W, H);
+  const bumped = looResidual(pairsFrom(truth, (x, y) => (x > 1300 && y > 2200 ? [0, 8] : [0, 0])), W, H);
+  assert.ok(smooth < 0.3, `trơn: ${smooth}`);
+  assert.ok(bumped > smooth + 0.5, `có lệch: ${bumped}`);
+});
+
+test("ngưỡng ô: ô trống độ đen 0.2 không bị tô vàng, ô tô đậm vẫn rõ", () => {
   const labels = ["A", "B", "C", "D"];
   assert.equal(classify([0.2, 0.12, 0.1, 0.11], labels).status, BLANK);
   assert.equal(classify([0.6, 0.12, 0.1, 0.11], labels).status, CLEAR);
