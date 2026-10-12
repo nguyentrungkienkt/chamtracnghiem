@@ -1,5 +1,6 @@
 // Màn chấm bằng camera: xem trước, dò 4 góc, tự chụp khi phiếu đứng yên, rồi chấm.
-import { processPhoto, outerCorners, candidateSquares, frameQuality, rotateK, toGray, QUALITY, AlignError } from "./omr.js";
+import { QUALITY } from "./omr.js";
+import { ensureCv, analyseFrame, processPhoto } from "./cv-client.js";
 import { readItems, gradeSheet, decorate, readDigits } from "../lib/grading.js";
 import { grayToCanvas, canvasToBlob, drawGraded } from "./render.js";
 import { sheets, newId } from "./db.js";
@@ -11,8 +12,8 @@ const STABLE_MS = 3000;       // phiếu đứng yên bao lâu thì tự chụp
 const MOVE_PX = 8;            // dịch chuyển góc tối đa (px, trên ảnh xem trước) vẫn tính là đứng yên
 const TICK_MS = 200;          // chu kỳ phân tích khung hình
 
-export function mountScan(root, { loadCv, session, onSaved, onOpenReview }) {
-  let stream = null, timer = null, busy = false, lastCorners = null, stableSince = 0, tpl = null, cv = null;
+export function mountScan(root, { session, onSaved, onOpenReview }) {
+  let stream = null, timer = null, busy = false, analysing = false, lastCorners = null, stableSince = 0, tpl = null, cvReady = false;
   let code = session.codes[0];
   const video = document.createElement("video");
   video.setAttribute("playsinline", ""); video.muted = true; video.autoplay = true;
@@ -44,10 +45,11 @@ export function mountScan(root, { loadCv, session, onSaved, onOpenReview }) {
 
   async function start() {
     // OpenCV.js chỉ nạp khi bấm Bật camera, để các tab khác vẫn dùng được.
-    if (!cv) {
+    if (!cvReady) {
       status("Đang nạp bộ xử lý ảnh…");
       try {
-        cv = await loadCv((t) => status(`Đang nạp bộ xử lý ảnh… ${t}`));
+        await ensureCv((t) => status(`Đang nạp bộ xử lý ảnh… ${t}`));
+        cvReady = true;
       } catch (e) {
         say(e.message, "err");
         return;
@@ -85,18 +87,16 @@ export function mountScan(root, { loadCv, session, onSaved, onOpenReview }) {
   }
 
   // Phân tích một khung xem trước. Không xoay, không chụp, chỉ cho biết có đủ 4 góc và đứng yên không.
-  function tick() {
-    if (busy || !video.videoWidth) return;
-    const h = Math.round((video.videoHeight / video.videoWidth) * PREVIEW_W);
-    small.height = h;
-    sctx.drawImage(video, 0, 0, PREVIEW_W, h);
-    const img = sctx.getImageData(0, 0, PREVIEW_W, h);
-    const rgba = cv.matFromImageData(img);
-    const gray = toGray(cv, rgba);
-    rgba.delete();
+  async function tick() {
+    if (busy || analysing || !cvReady || !tpl || !video.videoWidth) return;
+    analysing = true;
     try {
-      const q = frameQuality(gray);
-      const corners = outerCorners(candidateSquares(cv, gray));
+      const h = Math.round((video.videoHeight / video.videoWidth) * PREVIEW_W);
+      small.height = h;
+      sctx.drawImage(video, 0, 0, PREVIEW_W, h);
+      const img = sctx.getImageData(0, 0, PREVIEW_W, h);
+      const { quality: q, corners } = await analyseFrame(img);
+      if (busy) return;   // đang chụp, bỏ kết quả khung này
       if (!corners || !shapeOk(corners, tpl)) {
         lastCorners = null; stableSince = 0;
         status(corners ? "Phiếu chưa đúng hình, đưa thẳng phiếu vào khung" : "Chưa thấy đủ 4 góc của phiếu");
@@ -116,7 +116,7 @@ export function mountScan(root, { loadCv, session, onSaved, onOpenReview }) {
       console.warn(e);
       status("Đang đọc khung hình…");
     } finally {
-      gray.delete();
+      analysing = false;
     }
   }
 
@@ -150,18 +150,8 @@ export function mountScan(root, { loadCv, session, onSaved, onOpenReview }) {
     full.getContext("2d").drawImage(video, 0, 0, W, H);
     try {
       const photoBlob = await canvasToBlob(full, 0.85);
-      const rgba = cv.matFromImageData(full.getContext("2d").getImageData(0, 0, W, H));
-      const gray = toGray(cv, rgba);
-      rgba.delete();
-      const tpl = await getTemplate(session.template);
-      let res;
-      try {
-        res = processPhoto(cv, gray, tpl);
-      } finally {
-        gray.delete();
-      }
-      const alignedCanvas = grayToCanvas(res.aligned.data, tpl.ref_w, tpl.ref_h);
-      res.aligned.delete();
+      const res = await processPhoto(full.getContext("2d").getImageData(0, 0, W, H), tpl);
+      const alignedCanvas = grayToCanvas(res.data, res.w, res.h);
       const alignedBlob = await canvasToBlob(alignedCanvas, 0.9);
       const sheet = await gradeAndSave({ tpl, darkness: res.darkness, alignedBlob, photoBlob, chosenCode: code });
       if (sheet.status === "GRADED") {
@@ -175,7 +165,7 @@ export function mountScan(root, { loadCv, session, onSaved, onOpenReview }) {
       }
     } catch (e) {
       console.warn(e);
-      const msg = e instanceof AlignError ? e.message : "Không chấm được phiếu này. Thử chụp lại.";
+      const msg = e.name === "AlignError" ? e.message : "Không chấm được phiếu này. Thử chụp lại.";
       say(`${msg}. Đưa phiếu thẳng và chụp lại.`, "err");
       resume();
     }

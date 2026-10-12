@@ -8,7 +8,7 @@ export const INNER_RATIO = 0.6;       // đo vùng lõi bubble, bỏ viền
 export const CANON_W = 1656, CANON_H = 2344;
 
 export class AlignError extends Error {
-  constructor(message, missing = []) { super(message); this.missing = missing; }
+  constructor(message, missing = []) { super(message); this.name = "AlignError"; this.missing = missing; }
 }
 
 const CORNER_NAMES = { tl: "trên trái", tr: "trên phải", br: "dưới phải", bl: "dưới trái" };

@@ -1,9 +1,9 @@
 // Lưu toàn bộ vỏ ứng dụng để mở được khi mất mạng. Mã nguồn mới được tải khi có mạng.
-const CACHE = "chamtn-v5";
+const CACHE = "chamtn-v6";
 const SHELL = [
   "./", "./index.html", "./styles.css", "./manifest.webmanifest", "./icon.svg",
   "./app/app.js", "./app/db.js", "./app/shared.js", "./app/templates.js", "./app/omr.js",
-  "./app/render.js", "./app/scan.js", "./app/review.js", "./app/export.js",
+  "./app/render.js", "./app/scan.js", "./app/cv-client.js", "./app/cv-worker.js", "./app/review.js", "./app/export.js",
   "./lib/answer-key.js", "./lib/grading.js", "./lib/templates.json",
 ];
 const CDN = [

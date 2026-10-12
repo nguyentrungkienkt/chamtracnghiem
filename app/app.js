@@ -32,47 +32,6 @@ function setTab(tab) {
 
 tabs.forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
 
-let cvPromise = null;
-// Hai nguồn: thử lần lượt nếu nguồn trước không tải được.
-const CV_URLS = [
-  "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
-  "https://unpkg.com/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
-];
-// Nạp OpenCV.js khi cần. onProgress(chuỗi) cập nhật trạng thái mỗi giây.
-// Lỗi tải được báo ngay và chuyển sang nguồn kế tiếp; quá 150 giây thì báo lỗi.
-function loadCv(onProgress = () => {}) {
-  if (window.cv && window.cv.Mat) return Promise.resolve(window.cv);
-  if (!cvPromise) {
-    cvPromise = new Promise((resolve, reject) => {
-      const t0 = Date.now();
-      let done = false, state = "đang tải", idx = 0, script = null;
-      const finish = (fn, v) => { if (done) return; done = true; clearInterval(timer); fn(v); };
-      const fail = (msg) => { cvPromise = null; if (script) script.remove(); finish(reject, new Error(msg)); };
-      const attempt = () => {
-        if (script) script.remove();
-        script = document.createElement("script");
-        script.src = CV_URLS[idx];
-        script.async = true;
-        state = `đang tải từ nguồn ${idx + 1}/${CV_URLS.length}`;
-        script.onload = () => { state = "đã tải xong, đang khởi tạo"; };
-        script.onerror = () => {
-          if (idx + 1 < CV_URLS.length) { idx++; attempt(); }
-          else fail("Không tải được OpenCV.js từ mọi nguồn. Kiểm tra mạng rồi bấm Thử lại.");
-        };
-        document.head.appendChild(script);
-      };
-      const timer = setInterval(() => {
-        const sec = Math.round((Date.now() - t0) / 1000);
-        if (window.cv && window.cv.Mat) finish(resolve, window.cv);
-        else if (sec > 150) fail("Quá 150 giây mà OpenCV.js chưa sẵn sàng. Thử lại hoặc đổi mạng.");
-        else onProgress(`${state} · ${sec} giây`);
-      }, 1000);
-      attempt();
-    });
-  }
-  return cvPromise;
-}
-
 // Chọn phiên khi mở tab Chấm / Bài / Xuất mà chưa có phiên đang dùng
 async function withSession(render) {
   if (state.session) return render(state.session);
@@ -112,7 +71,7 @@ function renderCham(session) {
   const root = document.getElementById("scan-root");
   root.innerHTML = "";
   const ctl = mountScan(root, {
-    loadCv, session,
+    session,
     onSaved: () => {},
     onOpenReview: (id) => { stopScan && stopScan(); openReview(session, id); },
   });
