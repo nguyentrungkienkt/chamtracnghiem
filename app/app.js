@@ -1,5 +1,9 @@
 // Điều hướng và các màn hình. Logic đáp án nằm ở lib/answer-key.js.
-import { sessions, newId } from "./db.js";
+import { sessions, sheets, newId } from "./db.js";
+import { mountScan } from "./scan.js";
+import { renderSheetList, renderReview } from "./review.js";
+import { exportCsv, exportImages } from "./export.js";
+import { fmt } from "./shared.js";
 import {
   parseAnswerRows, validateStructure, maxScore, defaultScoring,
 } from "../lib/answer-key.js";
@@ -17,9 +21,9 @@ function h(html) { view.innerHTML = html; }
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
-function fmt(n) { return Number(n).toLocaleString("vi-VN", { maximumFractionDigits: 2 }); }
 
 function setTab(tab) {
+  if (stopScan) { stopScan(); stopScan = null; }
   state.tab = tab;
   state.screen = "list";
   tabs.forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
@@ -28,14 +32,115 @@ function setTab(tab) {
 
 tabs.forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
 
+let cvPromise = null;
+// Nạp OpenCV.js khi cần (lần đầu mở tab Chấm). Chờ tối đa 60 giây.
+function loadCv() {
+  if (!cvPromise) {
+    cvPromise = new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const timer = setInterval(() => {
+        if (window.cv && window.cv.Mat) { clearInterval(timer); resolve(window.cv); }
+        else if (Date.now() - t0 > 60000) { clearInterval(timer); cvPromise = null; reject(new Error("timeout")); }
+      }, 100);
+    });
+  }
+  return cvPromise;
+}
+
+// Chọn phiên khi mở tab Chấm / Bài / Xuất mà chưa có phiên đang dùng
+async function withSession(render) {
+  if (state.session) return render(state.session);
+  let list = [];
+  try { list = await sessions.all(); } catch (e) { console.warn(e); }
+  if (list.length === 0) {
+    h(`<h1>${TAB_TITLE[state.tab]}</h1><div class="card muted">Chưa có phiên nào. Vào tab <b>Phiên</b> để tạo phiên trước.</div>`);
+    return;
+  }
+  h(`<h1>${TAB_TITLE[state.tab]}</h1><p class="muted">Chọn phiên:</p>
+    ${list.map((x) => `<button class="card item" data-id="${esc(x.id)}"><b>${esc(x.name)}</b>
+      <div class="muted">${esc(TEMPLATES[x.template]?.name || x.template)} · ${x.codes.length} mã đề</div></button>`).join("")}`);
+  view.querySelectorAll("[data-id]").forEach((b) => b.onclick = async () => {
+    state.session = await sessions.get(b.dataset.id);
+    render(state.session);
+  });
+}
+
+const TAB_TITLE = { cham: "Chấm bài", bai: "Bài đã chấm", xuat: "Xuất kết quả" };
+
 async function render() {
   if (state.tab === "phien") {
     if (state.screen === "new") return renderNew();
     if (state.screen === "detail") return renderDetail();
     return renderList();
   }
-  const titles = { cham: "Chấm bài", bai: "Bài đã chấm", xuat: "Xuất kết quả" };
-  h(`<h1>${titles[state.tab]}</h1><div class="card muted">Sẽ làm ở bước sau. Cần tạo phiên trước.</div>`);
+  if (state.tab === "cham") return withSession(renderCham);
+  if (state.tab === "bai") return withSession(renderBai);
+  if (state.tab === "xuat") return withSession(renderXuat);
+}
+
+let stopScan = null;
+function renderCham(session) {
+  if (stopScan) { stopScan(); stopScan = null; }
+  h(`<div class="row between"><button id="btn-pick">Đổi phiên</button><span class="muted">${esc(session.name)}</span></div><div id="scan-root"></div>`);
+  document.getElementById("btn-pick").onclick = () => { state.session = null; render(); };
+  const root = document.getElementById("scan-root");
+  root.innerHTML = `<div class="card muted">Đang nạp bộ xử lý ảnh…</div>`;
+  loadCv().then((cv) => {
+    root.innerHTML = "";
+    const ctl = mountScan(root, {
+      cv, session,
+      onSaved: () => {},
+      onOpenReview: (id) => { stopScan && stopScan(); openReview(session, id); },
+    });
+    stopScan = ctl.stop;
+  }).catch(() => {
+    root.innerHTML = `<div class="err">Chưa nạp được bộ xử lý ảnh (OpenCV.js). Kiểm tra mạng rồi mở lại tab này.</div>`;
+  });
+}
+
+function openReview(session, sheetId) {
+  state.screen = "review";
+  h(`<div id="rv-root"></div>`);
+  renderReview(document.getElementById("rv-root"), session, sheetId, () => {
+    state.tab = "bai"; state.screen = "list"; setTab("bai");
+  });
+}
+
+async function renderBai(session) {
+  if (stopScan) { stopScan(); stopScan = null; }
+  h(`<div class="row between"><button id="btn-pick">Đổi phiên</button><span class="muted">${esc(session.name)}</span></div><div id="bai-root"></div>`);
+  document.getElementById("btn-pick").onclick = () => { state.session = null; render(); };
+  renderSheetList(document.getElementById("bai-root"), session, (id) => openReview(session, id));
+}
+
+function renderXuat(session) {
+  if (stopScan) { stopScan(); stopScan = null; }
+  h(`
+    <div class="row between"><button id="btn-pick">Đổi phiên</button><span class="muted">${esc(session.name)}</span></div>
+    <h1>Xuất kết quả</h1>
+    <div class="card">
+      <h2>Bảng điểm (CSV)</h2>
+      <p class="muted">Mở được bằng Excel. Có điểm từng phần, tổng và trạng thái từng bài.</p>
+      <button class="primary big" id="btn-csv">Tải bảng điểm</button>
+    </div>
+    <div class="card">
+      <h2>Ảnh đã chấm</h2>
+      <p class="muted">Gửi qua hộp chia sẻ của điện thoại, hoặc tải về từng ảnh nếu máy không hỗ trợ gửi nhiều ảnh.</p>
+      <button class="big" id="btn-img">Xuất ảnh</button>
+      <div id="xuat-msg" class="muted"></div>
+    </div>`);
+  document.getElementById("btn-pick").onclick = () => { state.session = null; render(); };
+  const msg = document.getElementById("xuat-msg");
+  document.getElementById("btn-csv").onclick = async () => {
+    try { const n = await exportCsv(session); msg.textContent = `Đã xuất ${n} bài.`; }
+    catch (e) { console.warn(e); msg.innerHTML = `<span class="err">Không xuất được bảng điểm.</span>`; }
+  };
+  document.getElementById("btn-img").onclick = async () => {
+    try {
+      const n = await exportImages(session, (i, t) => { msg.textContent = `Đang tạo ảnh ${i}/${t}…`; });
+      msg.textContent = n ? `Đã xuất ${n} ảnh.` : "Không có bài nào để xuất.";
+    } catch (e) { console.warn(e); msg.innerHTML = `<span class="err">Không xuất được ảnh.</span>`; }
+  };
 }
 
 async function renderList() {
@@ -239,7 +344,9 @@ function renderDetail() {
   document.getElementById("btn-del").onclick = async () => {
     if (!confirm(`Xóa phiên "${s.name}" và toàn bộ bài đã chấm trên máy này?`)) return;
     if (!confirm("Xác nhận xóa lần nữa. Không khôi phục được.")) return;
+    await sheets.removeBySession(s.id);
     await sessions.remove(s.id);
+    if (state.session && state.session.id === s.id) state.session = null;
     state.screen = "list";
     render();
   };
