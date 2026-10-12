@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { classify, readItems, gradeSheet, decorate, BLANK, CLEAR, UNCERTAIN, MULTIPLE } from "../lib/grading.js";
+import { classify, readItems, gradeSheet, decorate, sbdValue, BLANK, CLEAR, UNCERTAIN, MULTIPLE, REVIEW } from "../lib/grading.js";
 import { defaultScoring } from "../lib/answer-key.js";
 
 const TPL = JSON.parse(readFileSync(new URL("../lib/templates.json", import.meta.url), "utf8"))
@@ -109,4 +109,12 @@ test("ảnh đã chấm: câu trống chỉ có viền xanh ở đáp án đúng
   const keys = { "p1:1": "D" };
   const marks = decorate(TPL, readOf({}), keys, { p1Count: 1, p2Count: 0, p3Count: 0 });
   assert.deepEqual(marks.filter((m) => m.key === "p1:1").map((m) => [m.label, m.mark]), [["D", "ghost"]]);
+});
+
+test("SBD: đủ 8 chữ số thì lấy giá trị, thiếu một chữ số thì để trống", () => {
+  const digits = (vals) => Object.fromEntries(vals.map((v, i) => [`sbd:${i + 1}`, { status: CLEAR, suggestion: v }]));
+  assert.equal(sbdValue(digits(["1", "2", "3", "4", "5", "6", "0", "7"])), "12345607");
+  const missing = digits(["1", "2", "3", "4", "5", "6", "0", "7"]);
+  missing["sbd:5"] = { status: REVIEW, suggestion: "" };
+  assert.equal(sbdValue(missing), "");
 });

@@ -85,7 +85,7 @@ function openReview(session, sheetId) {
     state.tab = "bai"; state.screen = "list"; setTab("bai");
   }, () => {
     state.tab = "cham"; state.screen = "list"; setTab("cham");
-  });
+  }, (id) => openReview(session, id));
 }
 
 async function renderBai(session) {

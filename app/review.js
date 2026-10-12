@@ -1,5 +1,6 @@
 // Danh sách bài đã chấm và màn kiểm tra: người chấm chọn lại các ô cần xem, rồi lưu.
-import { readItems, applyOverrides, gradeSheet, decorate, readDigits, BLANK, CLEAR } from "../lib/grading.js";
+// Màn kiểm tra: đầu trang là SBD và điểm (chữ lớn); vuốt trái/phải để sang bài sau/trước.
+import { readItems, applyOverrides, gradeSheet, decorate, readDigits, sbdValue, BLANK, CLEAR } from "../lib/grading.js";
 import { findKeys } from "../lib/answer-key.js";
 import { drawGraded, canvasToBlob, blobToImage, grayToCanvas } from "./render.js";
 import { ensureCv, processPhoto } from "./cv-client.js";
@@ -15,6 +16,9 @@ const CYCLE = {
   digit: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ""],
 };
 
+const SWIPE_MIN_PX = 60;   // quãng vuốt tối thiểu để chuyển bài
+const SWIPE_MAX_MS = 700;  // vuốt chậm hơn thế là kéo, không chuyển bài
+
 const statusTag = (s) => (s === "GRADED" ? `<span class="tag ok">Đã chấm</span>` : `<span class="tag warn">Cần xem</span>`);
 
 function itemName(key) {
@@ -27,9 +31,16 @@ function itemName(key) {
   return key;
 }
 
+// SBD đọc từ phiếu (đã tính cả sửa tay); chuỗi rỗng nếu chưa đọc đủ 8 chữ số
+export function sheetSbd(tpl, sheet) {
+  return sbdValue(applyOverrides(readItems(tpl, sheet.darkness), sheet.overrides || {}));
+}
+
 // Danh sách bài của một phiên
 export async function renderSheetList(root, session, onOpen) {
   const list = await sheets.bySession(session.id);
+  const tpl = await getTemplate(session.template);
+  const sbdOf = new Map(list.map((s) => [s.id, sheetSbd(tpl, s)]));
   let filter = "all";
   const draw = () => {
     const rows = list.filter((s) => filter === "all" || s.status !== "GRADED");
@@ -41,7 +52,7 @@ export async function renderSheetList(root, session, onOpen) {
       </div>
       ${rows.length === 0 ? `<div class="card muted">Chưa có bài nào.</div>` : rows.map((s) => `
         <button class="card item" data-id="${s.id}">
-          <div class="row between"><b>Mã ${s.code}</b>${statusTag(s.status)}</div>
+          <div class="row between"><b>SBD ${sbdOf.get(s.id) || "chưa đọc"} · Mã ${s.code}</b>${statusTag(s.status)}</div>
           <div class="muted">${new Date(s.createdAt).toLocaleString("vi-VN")} · Tổng ${fmt(s.total)} / ${fmt(session.maxTotal)}</div>
         </button>`).join("")}`;
     root.querySelectorAll("[data-f]").forEach((b) => b.onclick = () => { filter = b.dataset.f; draw(); });
@@ -50,12 +61,15 @@ export async function renderSheetList(root, session, onOpen) {
   draw();
 }
 
-// Màn kiểm tra một bài. onBack: quay lại danh sách.
-export async function renderReview(root, session, sheetId, onBack, onNext = () => {}) {
+// Màn kiểm tra một bài. onBack: quay lại danh sách; onNext: chấm phiếu tiếp theo;
+// onOpen(id): mở bài khác (vuốt trái = bài sau trong danh sách, vuốt phải = bài trước).
+export async function renderReview(root, session, sheetId, onBack, onNext = () => {}, onOpen = () => {}) {
   const original = await sheets.get(sheetId);
   if (!original) { root.innerHTML = `<div class="err">Không tìm thấy bài này.</div>`; return; }
   const sheet = { ...original, overrides: { ...(original.overrides || {}) } };
   const tpl = await getTemplate(session.template);
+  const order = (await sheets.bySession(session.id)).map((s) => s.id);   // cùng thứ tự với danh sách
+  const pos = order.indexOf(sheet.id);
 
   // Tính lại toàn bộ từ độ đen gốc + các sửa tay
   function recompute() {
@@ -87,12 +101,15 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
       for (const k of Object.keys(read)) if (read[k].kind === "digit" && read[k].status !== CLEAR && !k.startsWith("sbd:")) pending.push(k);
     }
     const uniq = [...new Set(pending)];
+    // SBD không chặn việc chấm: chưa đọc đủ thì chỉ hiện ô để sửa
+    const sbd = sbdValue(read);
+    const sbdPending = sbd ? [] : Object.keys(read).filter((k) => k.startsWith("sbd:") && read[k].status !== CLEAR);
     const status = grade && uniq.length === 0 && warnings.length === 0 ? "GRADED" : "NEEDS_REVIEW";
     sheet.warnings = warnings;
     sheet.status = status;
     sheet.parts = grade ? grade.parts : { p1: 0, p2: 0, p3: 0 };
     sheet.total = grade ? grade.total : 0;
-    return { read, keys, grade, pending: uniq, warnings, status };
+    return { read, keys, grade, pending: uniq, sbd, sbdPending, warnings, status };
   }
 
   let current = recompute();
@@ -140,26 +157,35 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
     const decos = current.grade ? decorate(tpl, current.read, current.keys, session.structure) : [];
     const canvas = await drawGraded({
       tpl, alignedBlob: sheet.alignedBlob, decorations: decos,
-      scoreLines: scoreLines(sheet, session), grid: showGrid,
+      scoreLines: scoreLines({ ...sheet, sbd: current.sbd }, session), grid: showGrid,
     });
     canvas.style.width = "100%";
     canvas.style.height = "auto";
-    root.querySelector("#rv-img").replaceChildren(canvas);
+    root.querySelector("#rv-img")?.replaceChildren(canvas);
   }
 
   function layout() {
+    const p = sheet.parts;
     root.innerHTML = `
       <div class="row between"><button id="rv-back">← Danh sách</button><button class="danger" id="rv-del">Xóa bài</button></div>
-      <h1>Bài mã ${sheet.code} ${statusTag(sheet.status)}</h1>
+      <div class="card scorecard">
+        <div class="sbd">SBD <b>${current.sbd || "chưa đọc"}</b></div>
+        <div class="bigtotal"><b>${fmt(sheet.total)}</b><span> / ${fmt(session.maxTotal)}</span></div>
+        <div class="parts">Phần I ${fmt(p.p1)} · Phần II ${fmt(p.p2)} · Phần III ${fmt(p.p3)}</div>
+        <div class="row between">
+          <span>Mã đề <select id="rv-code">${session.codes.map((c) => `<option value="${c}" ${c === sheet.code ? "selected" : ""}>${c}</option>`).join("")}</select></span>
+          ${statusTag(sheet.status)}
+        </div>
+        ${current.warnings.map((w) => `<div class="err">${w}</div>`).join("")}
+      </div>
       <div id="rv-img" class="imgbox"></div>
+      <p class="navhint">${pos >= 0 ? `Bài ${pos + 1} / ${order.length} · ` : ""}Vuốt trái: bài sau · vuốt phải: bài trước</p>
+      <div class="row">
+        <button id="rv-prev" ${pos <= 0 ? "disabled" : ""}>‹ Bài trước</button>
+        <button id="rv-following" ${pos < 0 || pos >= order.length - 1 ? "disabled" : ""}>Bài sau ›</button>
+      </div>
       <div class="row"><button id="rv-grid">${showGrid ? "Ẩn lưới ô" : "Hiện lưới ô (kiểm tra căn chỉnh)"}</button><button id="rv-rot">Xoay 180°</button><button id="rv-reread">Đọc lại</button></div>
       <button class="primary big" id="rv-next">Chấm phiếu tiếp theo</button>
-      <div class="card">
-        <div class="total">Tổng: <b>${fmt(sheet.total)}</b> / ${fmt(session.maxTotal)}</div>
-        ${current.warnings.map((w) => `<div class="err">${w}</div>`).join("")}
-        <label>Mã đề của bài</label>
-        <select id="rv-code">${session.codes.map((c) => `<option value="${c}" ${c === sheet.code ? "selected" : ""}>${c}</option>`).join("")}</select>
-      </div>
       ${current.pending.length ? `
         <div class="card">
           <h2>Cần xem (${current.pending.length} ô)</h2>
@@ -169,11 +195,22 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
               <span>${itemName(k)}<br><small class="muted">độ đen cao/nhì: ${darkDiag(k)}</small></span><b>${eff(k) || "trống"}</b>
             </button>`).join("")}
         </div>` : `<div class="card ok">Không còn ô cần xem.</div>`}
+      ${current.sbdPending.length ? `
+        <div class="card">
+          <h2>Số báo danh chưa đọc đủ</h2>
+          <p class="muted">Không ảnh hưởng đến điểm. Chạm vào ô để sửa chữ số.</p>
+          ${current.sbdPending.map((k) => `
+            <button class="row between pick" data-k="${k}">
+              <span>${itemName(k)}<br><small class="muted">độ đen cao/nhì: ${darkDiag(k)}</small></span><b>${eff(k) || "trống"}</b>
+            </button>`).join("")}
+        </div>` : ""}
       <button class="primary big" id="rv-save">Lưu</button>
     `;
     root.querySelector("#rv-back").onclick = onBack;
     root.querySelector("#rv-grid").onclick = () => { showGrid = !showGrid; layout(); paint(); };
     root.querySelector("#rv-next").onclick = onNext;
+    root.querySelector("#rv-prev").onclick = () => move(-1);
+    root.querySelector("#rv-following").onclick = () => move(1);
     root.querySelector("#rv-rot").onclick = rotate180;
     root.querySelector("#rv-reread").onclick = () => reprocess(sheet.k ?? null, "#rv-reread", "Đọc lại");
     root.querySelector("#rv-code").onchange = (e) => { sheet.code = e.target.value; refresh(); };
@@ -199,14 +236,19 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
     paint();
   }
 
+  // Ghi bài xuống máy (dùng cho nút Lưu và khi chuyển bài)
+  async function persist() {
+    const { darkness, alignedBlob, photoBlob, id, sessionId, createdAt, k } = sheet;
+    await sheets.put({
+      id, sessionId, createdAt, darkness, alignedBlob, photoBlob, k,
+      code: sheet.code, overrides: sheet.overrides, warnings: sheet.warnings,
+      status: sheet.status, parts: sheet.parts, total: sheet.total,
+    });
+  }
+
   async function save() {
     try {
-      const { darkness, alignedBlob, photoBlob, id, sessionId, createdAt } = sheet;
-      await sheets.put({
-        id, sessionId, createdAt, darkness, alignedBlob, photoBlob,
-        code: sheet.code, overrides: sheet.overrides, warnings: sheet.warnings,
-        status: sheet.status, parts: sheet.parts, total: sheet.total,
-      });
+      await persist();
       const btn = root.querySelector("#rv-save");
       btn.textContent = "Đã lưu";
       setTimeout(() => { if (btn) btn.textContent = "Lưu"; }, 1500);
@@ -215,6 +257,29 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
       alert("Không lưu được bài. Thử lại.");
     }
   }
+
+  // Chuyển sang bài kế bên: lưu bài hiện tại trước để không mất sửa tay
+  async function move(delta) {
+    const target = order[pos + delta];
+    if (!target) return;
+    try { await persist(); } catch (e) { console.warn(e); alert("Không lưu được bài hiện tại. Chưa chuyển bài."); return; }
+    onOpen(target);
+  }
+
+  // Vuốt: chạm đầu và chạm cuối, lệch ngang đủ lớn và nhanh thì chuyển bài
+  let touch = null;
+  root.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { touch = null; return; }
+    const t = e.touches[0];
+    touch = { x: t.clientX, y: t.clientY, t: Date.now() };
+  }, { passive: true });
+  root.addEventListener("touchend", (e) => {
+    if (!touch) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touch.x, dy = t.clientY - touch.y, dt = Date.now() - touch.t;
+    touch = null;
+    if (Math.abs(dx) >= SWIPE_MIN_PX && Math.abs(dx) > 1.5 * Math.abs(dy) && dt < SWIPE_MAX_MS) move(dx < 0 ? 1 : -1);
+  }, { passive: true });
 
   layout();
   paint();
@@ -227,7 +292,7 @@ export async function gradedBlob(session, sheet) {
   const keys = findKeys(session.keys, sheet.code) || {};
   const grade = findKeys(session.keys, sheet.code) ? gradeSheet(read, keys, session.structure, session.scoring) : null;
   const decos = grade ? decorate(tpl, read, keys, session.structure) : [];
-  const s = { ...sheet, parts: grade ? grade.parts : sheet.parts, total: grade ? grade.total : sheet.total };
+  const s = { ...sheet, sbd: sbdValue(read), parts: grade ? grade.parts : sheet.parts, total: grade ? grade.total : sheet.total };
   const canvas = await drawGraded({ tpl, alignedBlob: sheet.alignedBlob, decorations: decos, scoreLines: scoreLines(s, session) });
   return canvasToBlob(canvas, 0.85);
 }

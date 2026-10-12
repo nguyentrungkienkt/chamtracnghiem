@@ -2,7 +2,7 @@
 // Mã đề đọc từ chính phiếu, không chọn trước.
 import { QUALITY, RESID_WARN } from "./omr.js";
 import { ensureCv, analyseFrame, processPhoto } from "./cv-client.js";
-import { readItems, gradeSheet, readDigits } from "../lib/grading.js";
+import { readItems, gradeSheet, readDigits, sbdValue } from "../lib/grading.js";
 import { findKeys } from "../lib/answer-key.js";
 import { grayToCanvas, canvasToBlob } from "./render.js";
 import { sheets, newId } from "./db.js";
@@ -23,6 +23,7 @@ import { fmt } from "./shared.js";
 
 const PREVIEW_W = 480;        // ảnh xem trước để dò góc nhanh
 const STABLE_MS = 3000;       // sau mỗi lần chấm, chờ bao lâu để thay phiếu khác vào
+const TARGET_MS = 3000;       // thời gian chấm mục tiêu: từ lúc đọc được phiếu đến lúc có điểm
 const ALIGN_TOL = 0.14;       // sai lệch cho phép giữa góc phát hiện và ô vuông hướng dẫn (tỷ lệ theo chiều rộng xem trước). Lệch trong mức này vẫn được nắn về ảnh chuẩn.
 const TICK_MS = 200;          // chu kỳ phân tích khung hình
 const CORNERS = ["tl", "tr", "br", "bl"];
@@ -44,6 +45,7 @@ export function mountScan(root, { session, onSaved }) {
     </div>
     <div class="status" id="cam-status">Bấm "Bật camera", rồi đưa phiếu cho 4 ô vuông khớp khung</div>
     <div class="row"><button class="primary big" id="cam-on">Bật camera</button><button class="big" id="cam-off" disabled>Tắt</button></div>
+    <div id="cam-tl" class="tl" hidden><i></i></div>
     <div id="cam-msg"></div>
   `;
   const camBox = root.querySelector(".cam");
@@ -216,36 +218,68 @@ export function mountScan(root, { session, onSaved }) {
     return okRatio && (tilt <= 15 || tilt >= 75);
   }
 
-  // Chụp khung hình đầy đủ rồi chấm
+  // Thanh thời gian: chạy lùi từ đầy về 0 trong TARGET_MS; khi chấm xong thì ẩn đi.
+  const tlBar = root.querySelector("#cam-tl i");
+  const tlBox = root.querySelector("#cam-tl");
+  function timelineStart() {
+    tlBox.hidden = false;
+    tlBar.style.transition = "none";
+    tlBar.style.width = "100%";
+    void tlBar.offsetWidth;   // buộc trình duyệt vẽ lại trước khi chạy
+    tlBar.style.transition = `width ${TARGET_MS}ms linear`;
+    tlBar.style.width = "0%";
+  }
+  function timelineStop() {
+    tlBar.style.transition = "none";
+    tlBar.style.width = "0%";
+    tlBox.hidden = true;
+  }
+
+  // Chụp khung hình rồi chấm. Chỉ phần đọc và chấm nằm trong thời gian chờ;
+  // việc nén ảnh và lưu bài làm sau khi đã hiện điểm.
   async function capture() {
     busy = true;
     if (timer) clearInterval(timer);
     timer = null;
-    status("Đang chấm…");
+    timelineStart();
+    const t0 = performance.now();
     const W = video.videoWidth, H = video.videoHeight;
     const full = document.createElement("canvas");
     full.width = W; full.height = H;
     full.getContext("2d").drawImage(video, 0, 0, W, H);
+    let res = null, sheet = null;
     try {
-      const photoBlob = await canvasToBlob(full, 0.85);
-      const res = await processPhoto(full.getContext("2d").getImageData(0, 0, W, H), tpl);
-      const alignedCanvas = grayToCanvas(res.data, res.w, res.h);
-      const alignedBlob = await canvasToBlob(alignedCanvas, 0.9);
-      const sheet = await gradeAndSave({ tpl, darkness: res.darkness, alignedBlob, photoBlob, k: res.k });
-      if (sheet.status === "GRADED") {
-        say(`Đã chấm mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm · ${geomNote(res)}`, "ok");
-      } else if (sheet.code === "?") {
-        say(`<b>Không đọc được mã đề</b>, phiếu chưa được chấm. Hãy chụp lại.<br>Độ đen mã đề: ${codeDiag(readItems(tpl, res.darkness))}<br>${geomNote(res)}`, "err");
-      } else {
-        say(`Mã ${sheet.code}: cần xem lại · ${geomNote(res)}. Xem trong tab Bài.`, "err");
-      }
-      status("Đưa phiếu tiếp theo cho 4 ô vuông khớp khung");
-      onSaved && onSaved(sheet);
-      resume();
+      res = await processPhoto(full.getContext("2d").getImageData(0, 0, W, H), tpl);
+      sheet = gradeRecord({ tpl, darkness: res.darkness, k: res.k });
     } catch (e) {
+      timelineStop();
       console.warn(e);
       const msg = e.name === "AlignError" ? e.message : "Không chấm được phiếu này. Thử chụp lại.";
       say(`${msg}. Đưa phiếu thẳng và chụp lại.`, "err");
+      resume();
+      return;
+    }
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    timelineStop();
+    const timing = `<small>Chấm trong ${secs} s (xử lý ảnh ${(res.ms / 1000).toFixed(1)} s)</small>`;
+    if (sheet.status === "GRADED") {
+      say(`Đã chấm SBD ${sheet.sbd || "chưa đọc"}, mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm · ${geomNote(res)}<br>${timing}`, "ok");
+    } else if (sheet.code === "?") {
+      say(`<b>Không đọc được mã đề</b>, phiếu chưa được chấm. Hãy chụp lại.<br>Độ đen mã đề: ${codeDiag(readItems(tpl, res.darkness))}<br>${geomNote(res)}<br>${timing}`, "err");
+    } else {
+      say(`Mã ${sheet.code}: cần xem lại · ${geomNote(res)}. Xem trong tab Bài.<br>${timing}`, "err");
+    }
+    status("Đưa phiếu tiếp theo cho 4 ô vuông khớp khung");
+    // Sau khi đã hiện điểm: nén ảnh rồi lưu bài
+    try {
+      sheet.alignedBlob = await canvasToBlob(grayToCanvas(res.data, res.w, res.h), 0.9);
+      sheet.photoBlob = await canvasToBlob(full, 0.85);
+      await sheets.put(sheet);
+      onSaved && onSaved(sheet);
+    } catch (e) {
+      console.warn(e);
+      say(`Đã chấm nhưng chưa lưu được bài này. Chụp lại phiếu.`, "err");
+    } finally {
       resume();
     }
   }
@@ -258,7 +292,8 @@ export function mountScan(root, { session, onSaved }) {
   }
 
   // Mã đề đọc từ phiếu; nếu không đọc được hoặc chưa có đáp án thì ghi nhận để xem lại.
-  async function gradeAndSave({ tpl, darkness, alignedBlob, photoBlob, k }) {
+  // Chỉ tính điểm, chưa có ảnh (ảnh được thêm và lưu sau khi đã hiện điểm).
+  function gradeRecord({ tpl, darkness, k }) {
     const read = readItems(tpl, darkness);
     const codeRead = readDigits(read, "code", 4);
     const code = codeRead.ok ? codeRead.value : "?";
@@ -269,23 +304,20 @@ export function mountScan(root, { session, onSaved }) {
     let grade = null;
     if (keys) grade = gradeSheet(read, keys, session.structure, session.scoring);
     const needs = !grade || grade.status !== "GRADED" || warnings.length > 0;
-    const sheet = {
+    return {
       id: newId(),
       sessionId: session.id,
       code,
+      sbd: sbdValue(read),
       createdAt: Date.now(),
       darkness,
       overrides: {},
-      alignedBlob,
-      photoBlob,
       k,
       warnings,
       status: needs ? "NEEDS_REVIEW" : "GRADED",
       parts: grade ? grade.parts : { p1: 0, p2: 0, p3: 0 },
       total: grade ? grade.total : 0,
     };
-    await sheets.put(sheet);
-    return sheet;
   }
 
   return { stop };

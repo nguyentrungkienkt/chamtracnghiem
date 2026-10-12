@@ -57,6 +57,7 @@ self.onmessage = async (e) => {
       return;
     }
     if (op === "photo") {
+      const t0 = performance.now();
       const rgba = matFromPixels(e.data.buf, e.data.w, e.data.h);
       const gray = M.toGray(cv, rgba);
       rgba.delete();
@@ -69,7 +70,8 @@ self.onmessage = async (e) => {
       const w = res.aligned.cols, h = res.aligned.rows;
       const data = new Uint8Array(res.aligned.data);   // bản sao, tách khỏi bộ nhớ wasm
       res.aligned.delete();
-      post({ id, ok: true, result: { data, w, h, darkness: res.darkness, k: res.k, marks: res.marks, dev: res.dev, residual: res.residual } }, [data.buffer]);
+      const ms = performance.now() - t0;   // thời gian xử lý trong luồng nền (ms)
+      post({ id, ok: true, result: { data, w, h, darkness: res.darkness, k: res.k, marks: res.marks, dev: res.dev, residual: res.residual, ms } }, [data.buffer]);
       return;
     }
     throw new Error(`Thao tác không hỗ trợ: ${op}`);
