@@ -1,5 +1,6 @@
 // Danh sách bài đã chấm và màn kiểm tra: người chấm chọn lại các ô cần xem, rồi lưu.
 import { readItems, applyOverrides, gradeSheet, decorate, readDigits, BLANK, CLEAR } from "../lib/grading.js";
+import { findKeys } from "../lib/answer-key.js";
 import { drawGraded, canvasToBlob } from "./render.js";
 import { sheets } from "./db.js";
 import { getTemplate } from "./templates.js";
@@ -58,13 +59,13 @@ export async function renderReview(root, session, sheetId, onBack) {
   // Tính lại toàn bộ từ độ đen gốc + các sửa tay
   function recompute() {
     const read = applyOverrides(readItems(tpl, sheet.darkness), sheet.overrides);
-    const keys = session.keys[sheet.code] || {};
+    const keys = findKeys(session.keys, sheet.code) || {};
     const warnings = [];
-    if (!session.keys[sheet.code]) warnings.push(`Mã đề ${sheet.code} chưa có đáp án`);
+    if (!findKeys(session.keys, sheet.code)) warnings.push(`Mã đề ${sheet.code} chưa có đáp án`);
     const cr = readDigits(read, "code", 4);
     if (!cr.ok) warnings.push("Mã đề trên phiếu chưa đọc đủ");
     else if (cr.value !== sheet.code) warnings.push(`Mã đề trên phiếu là ${cr.value}, khác mã đang chọn ${sheet.code}`);
-    const grade = session.keys[sheet.code] ? gradeSheet(read, keys, session.structure, session.scoring) : null;
+    const grade = findKeys(session.keys, sheet.code) ? gradeSheet(read, keys, session.structure, session.scoring) : null;
     const pending = [];
     if (grade) {
       for (const p of grade.pending) {
@@ -170,8 +171,8 @@ export async function renderReview(root, session, sheetId, onBack) {
 export async function gradedBlob(session, sheet) {
   const tpl = await getTemplate(session.template);
   const read = applyOverrides(readItems(tpl, sheet.darkness), sheet.overrides || {});
-  const keys = session.keys[sheet.code] || {};
-  const grade = session.keys[sheet.code] ? gradeSheet(read, keys, session.structure, session.scoring) : null;
+  const keys = findKeys(session.keys, sheet.code) || {};
+  const grade = findKeys(session.keys, sheet.code) ? gradeSheet(read, keys, session.structure, session.scoring) : null;
   const decos = grade ? decorate(tpl, read, keys, session.structure) : [];
   const s = { ...sheet, parts: grade ? grade.parts : sheet.parts, total: grade ? grade.total : sheet.total };
   const canvas = await drawGraded({ tpl, alignedBlob: sheet.alignedBlob, decorations: decos, scoreLines: scoreLines(s, session) });

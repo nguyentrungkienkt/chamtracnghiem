@@ -3,6 +3,7 @@
 import { QUALITY } from "./omr.js";
 import { ensureCv, analyseFrame, processPhoto } from "./cv-client.js";
 import { readItems, gradeSheet, readDigits } from "../lib/grading.js";
+import { findKeys } from "../lib/answer-key.js";
 import { grayToCanvas, canvasToBlob } from "./render.js";
 import { sheets, newId } from "./db.js";
 import { getTemplate } from "./templates.js";
@@ -247,7 +248,7 @@ export function mountScan(root, { session, onSaved }) {
     const read = readItems(tpl, darkness);
     const codeRead = readDigits(read, "code", 4);
     const code = codeRead.ok ? codeRead.value : "?";
-    const keys = codeRead.ok ? session.keys[code] : null;
+    const keys = codeRead.ok ? findKeys(session.keys, code) : null;
     const warnings = [];
     if (!codeRead.ok) warnings.push("Không đọc đủ mã đề trên phiếu");
     else if (!keys) warnings.push(`Mã đề ${code} chưa có đáp án trong file`);

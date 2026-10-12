@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  parseHeader, parseAnswerRows, p3Error, maxScore, defaultScoring, validateStructure, cellText,
+  parseHeader, parseAnswerRows, p3Error, maxScore, defaultScoring, validateStructure, cellText, findKeys,
 } from "../lib/answer-key.js";
 
 const STRUCT = { p1Count: 3, p2Count: 2, p3Count: 2 };
@@ -109,4 +109,11 @@ test("cellText chuyển số thập phân dùng dấu phẩy", () => {
   assert.equal(cellText(2.25), "2,25");
   assert.equal(cellText(18), "18");
   assert.equal(cellText(null), "");
+});
+
+test("tìm đáp án khi Excel làm mất số 0 đầu của mã đề", () => {
+  const keys = { "203": { a: 1 }, "1234": { b: 2 } };
+  assert.deepEqual(findKeys(keys, "1234"), { b: 2 });   // khớp đúng
+  assert.deepEqual(findKeys(keys, "0203"), { a: 1 });   // khớp theo giá trị số
+  assert.equal(findKeys(keys, "0999"), undefined);      // không có mã này
 });
