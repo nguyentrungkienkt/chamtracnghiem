@@ -11,7 +11,7 @@ import { fmt } from "./shared.js";
 const PREVIEW_W = 480;        // ảnh xem trước để dò góc nhanh
 const STABLE_MS = 3000;       // phiếu khớp khung và đứng yên bao lâu thì tự chụp
 const MOVE_PX = 8;            // dịch chuyển góc tối đa (px, trên ảnh xem trước) vẫn tính là đứng yên
-const ALIGN_TOL = 0.06;       // sai lệch cho phép giữa góc phát hiện và ô vuông hướng dẫn (tỷ lệ theo chiều rộng xem trước)
+const ALIGN_TOL = 0.14;       // sai lệch cho phép giữa góc phát hiện và ô vuông hướng dẫn (tỷ lệ theo chiều rộng xem trước). Lệch trong mức này vẫn được nắn về ảnh chuẩn.
 const TICK_MS = 200;          // chu kỳ phân tích khung hình
 const CORNERS = ["tl", "tr", "br", "bl"];
 const CORNER_TEXT = { tl: "trên trái", tr: "trên phải", br: "dưới phải", bl: "dưới trái" };
@@ -27,8 +27,8 @@ export function mountScan(root, { session, onSaved }) {
   root.innerHTML = `
     <div class="cam">
       <div class="guides" id="guides">${CORNERS.map((k) => `<i class="gmark" data-k="${k}"></i>`).join("")}</div>
-      <div class="status" id="cam-status">Bấm "Bật camera", rồi đưa phiếu cho 4 ô vuông khớp khung</div>
     </div>
+    <div class="status" id="cam-status">Bấm "Bật camera", rồi đưa phiếu cho 4 ô vuông khớp khung</div>
     <div class="row"><button class="primary big" id="cam-on">Bật camera</button><button class="big" id="cam-off" disabled>Tắt</button></div>
     <div id="cam-msg"></div>
   `;
@@ -43,10 +43,10 @@ export function mountScan(root, { session, onSaved }) {
   function say(text, cls = "") { msgEl.innerHTML = text ? `<div class="${cls}">${text}</div>` : ""; }
   function status(text) { statusEl.textContent = text; }
 
-  // Vị trí khung hướng dẫn trên ảnh xem trước: hộp cao 80% khung, giữ tỷ lệ của phiếu, căn giữa.
+  // Vị trí khung hướng dẫn trên ảnh xem trước: hộp cao 84% khung, giữ tỷ lệ của phiếu, căn giữa.
   function guideBox(h) {
-    const bh = 0.8 * h, bw = bh * (tpl.ref_w / tpl.ref_h);
-    return { x0: (PREVIEW_W - bw) / 2, y0: 0.1 * h, bw, bh };
+    const bh = 0.84 * h, bw = bh * (tpl.ref_w / tpl.ref_h);
+    return { x0: (PREVIEW_W - bw) / 2, y0: 0.08 * h, bw, bh };
   }
 
   function guidePoints(h) {
