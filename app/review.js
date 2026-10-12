@@ -93,9 +93,12 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
   let showGrid = false;
 
   // Phiếu bị ngược: xử lý lại từ ảnh chụp gốc với chiều đã đổi 180 độ, rồi chấm lại.
-  async function rotate180() {
-    const btn = root.querySelector("#rv-rot");
-    if (!sheet.photoBlob) { alert("Bài này không còn ảnh chụp gốc để xoay."); return; }
+  async function rotate180() { await reprocess(((sheet.k ?? 0) + 2) % 4, "#rv-rot", "Xoay 180°"); }
+
+  // Đọc lại từ ảnh chụp gốc với mẫu hiện tại (dùng sau khi cập nhật mẫu). k: chiều phiếu, null = tự dò.
+  async function reprocess(k, btnSel, btnText) {
+    const btn = root.querySelector(btnSel);
+    if (!sheet.photoBlob) { alert("Bài này không còn ảnh chụp gốc để xử lý lại."); return; }
     btn.disabled = true; btn.textContent = "Đang xử lý…";
     try {
       await ensureCv();
@@ -103,7 +106,7 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
       const c = document.createElement("canvas");
       c.width = img.naturalWidth; c.height = img.naturalHeight;
       c.getContext("2d").drawImage(img, 0, 0);
-      const res = await processPhoto(c.getContext("2d").getImageData(0, 0, c.width, c.height), tpl, ((sheet.k ?? 0) + 2) % 4);
+      const res = await processPhoto(c.getContext("2d").getImageData(0, 0, c.width, c.height), tpl, k);
       sheet.alignedBlob = await canvasToBlob(grayToCanvas(res.data, res.w, res.h), 0.9);
       sheet.darkness = res.darkness;
       sheet.k = res.k;
@@ -112,8 +115,8 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
       current = recompute();
       layout(); paint();
     } catch (e) {
-      alert(`Không xoay được phiếu: ${e.message}`);
-      btn.disabled = false; btn.textContent = "Xoay 180°";
+      alert(`Không xử lý lại được phiếu: ${e.message}`);
+      btn.disabled = false; btn.textContent = btnText;
     }
   }
   async function paint() {
@@ -132,7 +135,7 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
       <div class="row between"><button id="rv-back">← Danh sách</button><button class="danger" id="rv-del">Xóa bài</button></div>
       <h1>Bài mã ${sheet.code} ${statusTag(sheet.status)}</h1>
       <div id="rv-img" class="imgbox"></div>
-      <div class="row"><button id="rv-grid">${showGrid ? "Ẩn lưới ô" : "Hiện lưới ô (kiểm tra căn chỉnh)"}</button><button id="rv-rot">Xoay 180°</button></div>
+      <div class="row"><button id="rv-grid">${showGrid ? "Ẩn lưới ô" : "Hiện lưới ô (kiểm tra căn chỉnh)"}</button><button id="rv-rot">Xoay 180°</button><button id="rv-reread">Đọc lại</button></div>
       <button class="primary big" id="rv-next">Chấm phiếu tiếp theo</button>
       <div class="card">
         <div class="total">Tổng: <b>${fmt(sheet.total)}</b> / ${fmt(session.maxTotal)}</div>
@@ -155,6 +158,7 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
     root.querySelector("#rv-grid").onclick = () => { showGrid = !showGrid; layout(); paint(); };
     root.querySelector("#rv-next").onclick = onNext;
     root.querySelector("#rv-rot").onclick = rotate180;
+    root.querySelector("#rv-reread").onclick = () => reprocess(sheet.k ?? null, "#rv-reread", "Đọc lại");
     root.querySelector("#rv-code").onchange = (e) => { sheet.code = e.target.value; refresh(); };
     root.querySelectorAll("[data-k]").forEach((b) => b.onclick = () => {
       const k = b.dataset.k;
