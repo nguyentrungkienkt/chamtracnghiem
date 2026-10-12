@@ -1,5 +1,5 @@
 // Lưu toàn bộ vỏ ứng dụng để mở được khi mất mạng. Mã nguồn mới được tải khi có mạng.
-const CACHE = "chamtn-v3";
+const CACHE = "chamtn-v4";
 const SHELL = [
   "./", "./index.html", "./styles.css", "./manifest.webmanifest", "./icon.svg",
   "./app/app.js", "./app/db.js", "./app/shared.js", "./app/templates.js", "./app/omr.js",
@@ -9,6 +9,7 @@ const SHELL = [
 const CDN = [
   "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
   "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
+  "https://unpkg.com/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
 ];
 
 self.addEventListener("install", (e) => {

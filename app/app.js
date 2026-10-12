@@ -33,28 +33,41 @@ function setTab(tab) {
 tabs.forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
 
 let cvPromise = null;
-const CV_URL = "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js";
-// Nạp OpenCV.js khi cần (lần đầu mở tab Chấm). Báo lỗi ngay nếu tải hỏng; chờ tối đa 120 giây nếu mạng chậm.
-// onProgress(giây) được gọi mỗi giây để giao diện cho biết app vẫn đang chạy.
+// Hai nguồn: thử lần lượt nếu nguồn trước không tải được.
+const CV_URLS = [
+  "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
+  "https://unpkg.com/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
+];
+// Nạp OpenCV.js khi cần. onProgress(chuỗi) cập nhật trạng thái mỗi giây.
+// Lỗi tải được báo ngay và chuyển sang nguồn kế tiếp; quá 150 giây thì báo lỗi.
 function loadCv(onProgress = () => {}) {
   if (window.cv && window.cv.Mat) return Promise.resolve(window.cv);
   if (!cvPromise) {
     cvPromise = new Promise((resolve, reject) => {
       const t0 = Date.now();
-      let done = false;
+      let done = false, state = "đang tải", idx = 0, script = null;
       const finish = (fn, v) => { if (done) return; done = true; clearInterval(timer); fn(v); };
-      const fail = (msg) => { cvPromise = null; finish(reject, new Error(msg)); };
-      const s = document.createElement("script");
-      s.src = CV_URL;
-      s.async = true;
-      s.onerror = () => { s.remove(); fail("Không tải được OpenCV.js. Kiểm tra mạng rồi thử lại."); };
+      const fail = (msg) => { cvPromise = null; if (script) script.remove(); finish(reject, new Error(msg)); };
+      const attempt = () => {
+        if (script) script.remove();
+        script = document.createElement("script");
+        script.src = CV_URLS[idx];
+        script.async = true;
+        state = `đang tải từ nguồn ${idx + 1}/${CV_URLS.length}`;
+        script.onload = () => { state = "đã tải xong, đang khởi tạo"; };
+        script.onerror = () => {
+          if (idx + 1 < CV_URLS.length) { idx++; attempt(); }
+          else fail("Không tải được OpenCV.js từ mọi nguồn. Kiểm tra mạng rồi bấm Thử lại.");
+        };
+        document.head.appendChild(script);
+      };
       const timer = setInterval(() => {
         const sec = Math.round((Date.now() - t0) / 1000);
         if (window.cv && window.cv.Mat) finish(resolve, window.cv);
-        else if (sec > 120) fail("Quá thời gian nạp OpenCV.js (mạng chậm?). Thử lại.");
-        else onProgress(sec);
+        else if (sec > 150) fail("Quá 150 giây mà OpenCV.js chưa sẵn sàng. Thử lại hoặc đổi mạng.");
+        else onProgress(`${state} · ${sec} giây`);
       }, 1000);
-      document.head.appendChild(s);
+      attempt();
     });
   }
   return cvPromise;
@@ -97,11 +110,11 @@ function renderCham(session) {
   h(`<div class="row between"><button id="btn-pick">Đổi phiên</button><span class="muted">${esc(session.name)}</span></div><div id="scan-root"></div>`);
   document.getElementById("btn-pick").onclick = () => { state.session = null; render(); };
   const root = document.getElementById("scan-root");
-  const showLoading = (sec = 0) => {
-    root.innerHTML = `<div class="card muted">Đang nạp bộ xử lý ảnh… ${sec} giây. Lần đầu cần tải khoảng 10 MB, nên có thể mất vài chục giây.</div>`;
+  const showLoading = (text = "") => {
+    root.innerHTML = `<div class="card muted">Đang nạp bộ xử lý ảnh… ${esc(text)}<br>Lần đầu cần tải khoảng 10 MB.</div>`;
   };
-  showLoading();
-  loadCv((sec) => showLoading(sec)).then((cv) => {
+  showLoading("");
+  loadCv((text) => showLoading(text)).then((cv) => {
     root.innerHTML = "";
     const ctl = mountScan(root, {
       cv, session,
