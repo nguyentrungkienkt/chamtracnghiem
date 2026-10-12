@@ -71,4 +71,7 @@ test("ngưỡng ô: ô trống độ đen 0.2 không bị tô vàng, ô tô đ�
   assert.equal(classify([0.2, 0.12, 0.1, 0.11], labels).status, BLANK);
   assert.equal(classify([0.6, 0.12, 0.1, 0.11], labels).status, CLEAR);
   assert.equal(classify([0.3, 0.12, 0.1, 0.11], labels).status, UNCERTAIN);
+  // ô tô nhạt trên ảnh điện thoại (0.25–0.34) nhưng các ô khác gần như trắng
+  assert.equal(classify([0.29, 0.04, 0.03, 0.03], labels).status, CLEAR);
+  assert.equal(classify([0.31, 0.01, 0.01, 0.04], labels).status, CLEAR);
 });

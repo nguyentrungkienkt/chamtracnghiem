@@ -29,7 +29,8 @@ test("phân loại: trống, tô rõ, tô nhiều, tô mờ", () => {
   assert.equal(classify([0.02, 0.03, 0.01, 0.02], L).status, BLANK);
   assert.equal(classify([0.02, 0.9, 0.02, 0.02], L).status, CLEAR);
   assert.equal(classify([0.9, 0.8, 0.02, 0.02], L).status, MULTIPLE);
-  assert.equal(classify([0.25, 0.02, 0.02, 0.02], L).status, UNCERTAIN);
+  assert.equal(classify([0.29, 0.04, 0.03, 0.03], L).status, CLEAR);
+  assert.equal(classify([0.3, 0.25, 0.2, 0.1], L).status, UNCERTAIN);
 });
 
 test("Phần I: đúng được 1 điểm mỗi câu theo cấu hình, trống tính 0", () => {
@@ -87,7 +88,7 @@ test("Phần III: ô trống giữa các ô đã tô là cần kiểm tra", () =
 
 test("ô mờ làm câu chờ người chấm, không tính điểm", () => {
   const keys = { "p1:1": "A" };
-  const d = dark(IDS); d["p1:1"] = [0.25, 0.02, 0.02, 0.02];   // tô mờ ở A
+  const d = dark(IDS); d["p1:1"] = [0.3, 0.25, 0.02, 0.02];   // tô mờ, hai ô gần nhau ở A và B
   const g = gradeSheet(readItems(TPL, d), keys, { p1Count: 1, p2Count: 0, p3Count: 0 }, defaultScoring());
   assert.equal(g.questions[0].status, "PENDING");
   assert.equal(g.status, "NEEDS_REVIEW");

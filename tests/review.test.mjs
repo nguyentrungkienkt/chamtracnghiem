@@ -25,7 +25,7 @@ function dark(marks) {
 
 test("sửa tay: chọn lại đáp án của câu mờ, câu được tính lại", () => {
   const d = dark({ "p1:1": ["A"], "p1:2": ["B"] });
-  d["p1:1"] = [0.25, 0.02, 0.02, 0.02];   // A mờ -> cần xem
+  d["p1:1"] = [0.3, 0.25, 0.02, 0.02];   // A, B gần nhau -> cần xem
   let read = readItems(TPL, d);
   const keys = { "p1:1": "B", "p1:2": "B" };
   const structure = { p1Count: 2, p2Count: 0, p3Count: 0 };
