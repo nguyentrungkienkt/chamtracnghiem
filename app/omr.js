@@ -249,13 +249,14 @@ function forcedOrient(cv, small, tpl, k) {
 // ---------------------------------------------------------------- nắn theo các ô vuông đen phụ
 // Sau khi nắn theo 4 góc, mỗi ô vuông mẫu (tpl.marks) được ghép với ô vuông tìm thấy gần nhất.
 // Độ lệch được khớp bằng đa thức bậc hai (6 hệ số cho mỗi trục), rồi ảnh được lấy mẫu lại.
-export const MARK_MAX_DIST = 14;     // khoảng cách tối đa để ghép một ô (px khung chuẩn)
+export const MARK_SEARCH_DIST = 30;  // tìm ô vuông gần mốc trong bán kính này (đủ rộng để chứa độ cong)
+export const MARK_TRACK_DIST = 6;    // sau khi khớp, chỉ nhận ô vuông nằm trong bán kính này quanh vị trí dự đoán
 export const MARK_MAX_SHIFT = 20;    // độ lệch tối đa cho phép ở mọi điểm (px)
 export const MARK_MIN_PAIRS = 16;    // ít hơn số này thì giữ nguyên ảnh đã nắn 4 góc (đa thức bậc ba có 10 hệ số)
 export const RESID_WARN = 2.5;       // sai số còn lại sau khi nắn (px) từ mức này trở lên: báo chụp lại
 
 // Ghép từng mốc với ô vuông gần nhất. Trả về [{x, y, dx, dy}] với (dx, dy) = vị trí thấy - vị trí mẫu.
-export function matchMarks(squares, marks) {
+export function matchMarks(squares, marks, maxDist = MARK_SEARCH_DIST) {
   const pairs = [];
   for (const m of marks) {
     let best = null, bd = Infinity;
@@ -263,7 +264,23 @@ export function matchMarks(squares, marks) {
       const d = Math.hypot(s.x - m[0], s.y - m[1]);
       if (d < bd) { bd = d; best = s; }
     }
-    if (best && bd <= MARK_MAX_DIST) pairs.push({ x: m[0], y: m[1], dx: best.x - m[0], dy: best.y - m[1] });
+    if (best && bd <= maxDist) pairs.push({ x: m[0], y: m[1], dx: best.x - m[0], dy: best.y - m[1] });
+  }
+  return pairs;
+}
+
+// Bám lại: với mỗi mốc, tìm ô vuông gần vị trí đã được mô hình dự đoán
+function trackPairs(squares, anchors, fit, w, h) {
+  const pairs = [];
+  for (const [x, y] of anchors) {
+    const [dx, dy] = displacementAt(fit, x, y, w, h);
+    const px = x + dx, py = y + dy;
+    let best = null, bd = Infinity;
+    for (const s of squares) {
+      const d = Math.hypot(s.x - px, s.y - py);
+      if (d < bd) { bd = d; best = s; }
+    }
+    if (best && bd <= MARK_TRACK_DIST) pairs.push({ x, y, dx: best.x - x, dy: best.y - y });
   }
   return pairs;
 }
@@ -321,23 +338,32 @@ export function displacementAt(fit, x, y, w, h) {
 
 // Nắn lại ảnh đã nắn 4 góc theo các ô vuông đen phụ. Trả về {aligned, used, dev}; thiếu điểm thì giữ nguyên.
 function refineWithMarks(cv, aligned, tpl) {
-  if (!tpl.marks || !tpl.marks.length) return { aligned, used: 0, dev: 0, residual: 0 };
+  if (!tpl.marks || !tpl.marks.length) return { aligned, used: 0, dev: 0, residual: null };
   const anchors = [...tpl.marks, ...Object.values(tpl.fiducials)];
-  const pairs = matchMarks(candidateSquares(cv, aligned), anchors);
-  // Độ cong: độ lệch trung bình của các ô vuông so với mẫu, đo trước khi nắn lại (px khung chuẩn)
-  let sq = 0;
-  for (const p of pairs) sq += p.dx * p.dx + p.dy * p.dy;
-  const dev = pairs.length ? Math.sqrt(sq / pairs.length) : 0;
-  if (pairs.length < MARK_MIN_PAIRS) return { aligned, used: pairs.length, dev, residual: 0 };
-  const w = aligned.cols, h = aligned.rows;
-  const fit = fitDisplacement(pairs, tpl.ref_w, tpl.ref_h);
-  const { cx, cy } = fit;
+  const squares = candidateSquares(cv, aligned);
+  const wide = matchMarks(squares, anchors, MARK_SEARCH_DIST);
+  // độ cong: độ lệch trung bình của các ô vuông so với mẫu, trước khi nắn lại (px khung chuẩn)
+  let sq0 = 0;
+  for (const p of wide) sq0 += p.dx * p.dx + p.dy * p.dy;
+  const dev = wide.length ? Math.sqrt(sq0 / wide.length) : 0;
+  if (wide.length < MARK_MIN_PAIRS) return { aligned, used: wide.length, dev, residual: null };
+  // lượt 1 khớp mô hình theo mọi ô tìm được, lượt 2 bám lại quanh vị trí dự đoán
+  let pairs = wide;
+  let fit = fitDisplacement(wide, tpl.ref_w, tpl.ref_h);
+  const tracked = trackPairs(squares, anchors, fit, tpl.ref_w, tpl.ref_h);
+  if (tracked.length >= MARK_MIN_PAIRS) {
+    pairs = tracked;
+    fit = fitDisplacement(tracked, tpl.ref_w, tpl.ref_h);
+  }
   let se = 0;   // sai số còn lại tại các ô vuông sau khi khớp
   for (const p of pairs) {
     const [fx, fy] = displacementAt(fit, p.x, p.y, tpl.ref_w, tpl.ref_h);
     se += (p.dx - fx) ** 2 + (p.dy - fy) ** 2;
   }
   const residual = Math.sqrt(se / pairs.length);
+  const { cx, cy } = fit;
+  const w = aligned.cols, h = aligned.rows;
+
   const mapX = new Float32Array(w * h), mapY = new Float32Array(w * h);
   for (let y = 0; y < h; y++) {
     const v = y / tpl.ref_h;
@@ -367,7 +393,7 @@ export function processPhoto(cv, fullGray, tpl, forcedK = null) {
   const smallH = Math.round(fullGray.rows * scale);
   const small = new cv.Mat();
   cv.resize(fullGray, small, new cv.Size(DETECT_W, smallH), 0, 0, cv.INTER_AREA);
-  let rotated = null, aligned = null, bg = null, marks = 0, dev = 0, residual = 0;
+  let rotated = null, aligned = null, bg = null, marks = 0, dev = 0, residual = null;
   try {
     const { k, f: fSmall } = forcedK == null ? orientUpright(cv, small, tpl) : forcedOrient(cv, small, tpl, forcedK);
     // xoay ảnh full-res cùng chiều với ảnh dò

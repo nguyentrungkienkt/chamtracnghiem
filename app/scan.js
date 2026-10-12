@@ -9,8 +9,10 @@ import { sheets, newId } from "./db.js";
 import { getTemplate } from "./templates.js";
 
 // Ghi chú hình học: số ô vuông đã dùng, độ cong trước nắn, sai số còn lại sau nắn
-const geomNote = (res) => `nắn ${res.marks} ô vuông · cong ${res.dev.toFixed(1)} px · sai số sau nắn ${res.residual.toFixed(1)} px`
-  + (res.residual >= RESID_WARN ? " (cao: nên chụp lại)" : "");
+const geomNote = (res) => (res.residual == null
+  ? `chưa nắn theo ô vuông (chỉ thấy ${res.marks}/31), cong ${res.dev.toFixed(1)} px`
+  : `nắn ${res.marks} ô vuông · cong ${res.dev.toFixed(1)} px · sai số sau nắn ${res.residual.toFixed(1)} px`
+    + (res.residual >= RESID_WARN ? " (cao: nên chụp lại)" : ""));
 
 // Độ đen cao nhất và thứ nhì của từng chữ số mã đề, để biết vì sao không đọc được
 const codeDiag = (read) => [1, 2, 3, 4].map((i) => {
@@ -233,7 +235,7 @@ export function mountScan(root, { session, onSaved }) {
       if (sheet.status === "GRADED") {
         say(`Đã chấm mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm · ${geomNote(res)}`, "ok");
       } else if (sheet.code === "?") {
-        say(`<b>Không đọc được mã đề</b>, phiếu chưa được chấm. Hãy chụp lại · ${geomNote(res)}`, "err");
+        say(`<b>Không đọc được mã đề</b>, phiếu chưa được chấm. Hãy chụp lại.<br>Độ đen mã đề: ${codeDiag(readItems(tpl, res.darkness))}<br>${geomNote(res)}`, "err");
       } else {
         say(`Mã ${sheet.code}: cần xem lại · ${geomNote(res)}. Xem trong tab Bài.`, "err");
       }
