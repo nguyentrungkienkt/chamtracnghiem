@@ -66,7 +66,7 @@ export function analyseFrame(img) {
 }
 
 // img: ImageData của cả khung chụp; tpl: mẫu phiếu. Trả về {data, w, h, darkness, k}.
-export function processPhoto(img, tpl) {
+export function processPhoto(img, tpl, k = null) {
   const data = img.data.slice();
-  return call("photo", { buf: data.buffer, w: img.width, h: img.height, tpl }, [data.buffer]);
+  return call("photo", { buf: data.buffer, w: img.width, h: img.height, tpl, k }, [data.buffer]);
 }

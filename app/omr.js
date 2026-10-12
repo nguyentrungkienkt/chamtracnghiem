@@ -240,15 +240,21 @@ export function orientUpright(cv, small, tpl) {
   } finally { g.delete(); }
 }
 
+// Dùng khi người chấm đã chỉ hướng phiếu bằng tay (nút Xoay): bỏ qua bước tự đoán chiều.
+function forcedOrient(cv, small, tpl, k) {
+  const g = rotateK(cv, small, k);
+  try { return { k, f: detectOn(cv, g, tpl) }; } finally { g.delete(); }
+}
+
 // Đọc toàn bộ phiếu: nhận ảnh xám full-res, trả về { aligned (Mat 1656x2344 xám), darkness, k, f }.
-export function processPhoto(cv, fullGray, tpl) {
+export function processPhoto(cv, fullGray, tpl, forcedK = null) {
   const scale = DETECT_W / fullGray.cols;
   const smallH = Math.round(fullGray.rows * scale);
   const small = new cv.Mat();
   cv.resize(fullGray, small, new cv.Size(DETECT_W, smallH), 0, 0, cv.INTER_AREA);
   let rotated = null, aligned = null, bg = null;
   try {
-    const { k, f: fSmall } = orientUpright(cv, small, tpl);
+    const { k, f: fSmall } = forcedK == null ? orientUpright(cv, small, tpl) : forcedOrient(cv, small, tpl, forcedK);
     // xoay ảnh full-res cùng chiều với ảnh dò
     rotated = rotateK(cv, fullGray, k);
     // kích thước ảnh dò sau khi xoay: k lẻ thì hai cạnh đổi chỗ

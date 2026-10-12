@@ -83,6 +83,8 @@ function openReview(session, sheetId) {
   h(`<div id="rv-root"></div>`);
   renderReview(document.getElementById("rv-root"), session, sheetId, () => {
     state.tab = "bai"; state.screen = "list"; setTab("bai");
+  }, () => {
+    state.tab = "cham"; state.screen = "list"; setTab("cham");
   });
 }
 

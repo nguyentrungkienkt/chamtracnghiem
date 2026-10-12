@@ -219,7 +219,7 @@ export function mountScan(root, { session, onSaved }) {
       const res = await processPhoto(full.getContext("2d").getImageData(0, 0, W, H), tpl);
       const alignedCanvas = grayToCanvas(res.data, res.w, res.h);
       const alignedBlob = await canvasToBlob(alignedCanvas, 0.9);
-      const sheet = await gradeAndSave({ tpl, darkness: res.darkness, alignedBlob, photoBlob });
+      const sheet = await gradeAndSave({ tpl, darkness: res.darkness, alignedBlob, photoBlob, k: res.k });
       if (sheet.status === "GRADED") {
         say(`Đã chấm mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm`, "ok");
       } else {
@@ -244,7 +244,7 @@ export function mountScan(root, { session, onSaved }) {
   }
 
   // Mã đề đọc từ phiếu; nếu không đọc được hoặc chưa có đáp án thì ghi nhận để xem lại.
-  async function gradeAndSave({ tpl, darkness, alignedBlob, photoBlob }) {
+  async function gradeAndSave({ tpl, darkness, alignedBlob, photoBlob, k }) {
     const read = readItems(tpl, darkness);
     const codeRead = readDigits(read, "code", 4);
     const code = codeRead.ok ? codeRead.value : "?";
@@ -264,6 +264,7 @@ export function mountScan(root, { session, onSaved }) {
       overrides: {},
       alignedBlob,
       photoBlob,
+      k,
       warnings,
       status: needs ? "NEEDS_REVIEW" : "GRADED",
       parts: grade ? grade.parts : { p1: 0, p2: 0, p3: 0 },

@@ -1,7 +1,8 @@
 // Danh sách bài đã chấm và màn kiểm tra: người chấm chọn lại các ô cần xem, rồi lưu.
 import { readItems, applyOverrides, gradeSheet, decorate, readDigits, BLANK, CLEAR } from "../lib/grading.js";
 import { findKeys } from "../lib/answer-key.js";
-import { drawGraded, canvasToBlob } from "./render.js";
+import { drawGraded, canvasToBlob, blobToImage, grayToCanvas } from "./render.js";
+import { ensureCv, processPhoto } from "./cv-client.js";
 import { sheets } from "./db.js";
 import { getTemplate } from "./templates.js";
 import { fmt, scoreLines } from "./shared.js";
@@ -50,7 +51,7 @@ export async function renderSheetList(root, session, onOpen) {
 }
 
 // Màn kiểm tra một bài. onBack: quay lại danh sách.
-export async function renderReview(root, session, sheetId, onBack) {
+export async function renderReview(root, session, sheetId, onBack, onNext = () => {}) {
   const original = await sheets.get(sheetId);
   if (!original) { root.innerHTML = `<div class="err">Không tìm thấy bài này.</div>`; return; }
   const sheet = { ...original, overrides: { ...(original.overrides || {}) } };
@@ -90,6 +91,31 @@ export async function renderReview(root, session, sheetId, onBack) {
   const cycleOf = (k) => CYCLE[current.read[k]?.kind || "option"];
 
   let showGrid = false;
+
+  // Phiếu bị ngược: xử lý lại từ ảnh chụp gốc với chiều đã đổi 180 độ, rồi chấm lại.
+  async function rotate180() {
+    const btn = root.querySelector("#rv-rot");
+    if (!sheet.photoBlob) { alert("Bài này không còn ảnh chụp gốc để xoay."); return; }
+    btn.disabled = true; btn.textContent = "Đang xử lý…";
+    try {
+      await ensureCv();
+      const img = await blobToImage(sheet.photoBlob);
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext("2d").drawImage(img, 0, 0);
+      const res = await processPhoto(c.getContext("2d").getImageData(0, 0, c.width, c.height), tpl, ((sheet.k ?? 0) + 2) % 4);
+      sheet.alignedBlob = await canvasToBlob(grayToCanvas(res.data, res.w, res.h), 0.9);
+      sheet.darkness = res.darkness;
+      sheet.k = res.k;
+      sheet.overrides = {};
+      await sheets.put(sheet);
+      current = recompute();
+      layout(); paint();
+    } catch (e) {
+      alert(`Không xoay được phiếu: ${e.message}`);
+      btn.disabled = false; btn.textContent = "Xoay 180°";
+    }
+  }
   async function paint() {
     const decos = current.grade ? decorate(tpl, current.read, current.keys, session.structure) : [];
     const canvas = await drawGraded({
@@ -106,7 +132,8 @@ export async function renderReview(root, session, sheetId, onBack) {
       <div class="row between"><button id="rv-back">← Danh sách</button><button class="danger" id="rv-del">Xóa bài</button></div>
       <h1>Bài mã ${sheet.code} ${statusTag(sheet.status)}</h1>
       <div id="rv-img" class="imgbox"></div>
-      <div class="row"><button id="rv-grid">${showGrid ? "Ẩn lưới ô" : "Hiện lưới ô (kiểm tra căn chỉnh)"}</button></div>
+      <div class="row"><button id="rv-grid">${showGrid ? "Ẩn lưới ô" : "Hiện lưới ô (kiểm tra căn chỉnh)"}</button><button id="rv-rot">Xoay 180°</button></div>
+      <button class="primary big" id="rv-next">Chấm phiếu tiếp theo</button>
       <div class="card">
         <div class="total">Tổng: <b>${fmt(sheet.total)}</b> / ${fmt(session.maxTotal)}</div>
         ${current.warnings.map((w) => `<div class="err">${w}</div>`).join("")}
@@ -126,6 +153,8 @@ export async function renderReview(root, session, sheetId, onBack) {
     `;
     root.querySelector("#rv-back").onclick = onBack;
     root.querySelector("#rv-grid").onclick = () => { showGrid = !showGrid; layout(); paint(); };
+    root.querySelector("#rv-next").onclick = onNext;
+    root.querySelector("#rv-rot").onclick = rotate180;
     root.querySelector("#rv-code").onchange = (e) => { sheet.code = e.target.value; refresh(); };
     root.querySelectorAll("[data-k]").forEach((b) => b.onclick = () => {
       const k = b.dataset.k;

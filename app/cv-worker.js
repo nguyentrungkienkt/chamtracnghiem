@@ -62,7 +62,7 @@ self.onmessage = async (e) => {
       rgba.delete();
       let res;
       try {
-        res = M.processPhoto(cv, gray, e.data.tpl);
+        res = M.processPhoto(cv, gray, e.data.tpl, e.data.k ?? null);
       } finally {
         gray.delete();
       }
