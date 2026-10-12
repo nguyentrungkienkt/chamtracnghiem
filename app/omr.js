@@ -265,11 +265,14 @@ export function processPhoto(cv, fullGray, tpl) {
     src.delete(); dst.delete(); M.delete();
 
     // chuẩn hóa ánh sáng: chia cho nền ước lượng (đóng hình thái + làm mờ), giấy ~ 1.0
+    // Nền tính trên ảnh nhỏ 1/4 rồi phóng to lại: nền vốn trơn nên kết quả gần như giống, nhưng nhanh hơn nhiều trên điện thoại.
+    const tiny = new cv.Mat(), tinyBg = new cv.Mat(), kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(16, 16));
+    cv.resize(aligned, tiny, new cv.Size(Math.round(tpl.ref_w / 4), Math.round(tpl.ref_h / 4)), 0, 0, cv.INTER_AREA);
+    cv.morphologyEx(tiny, tinyBg, cv.MORPH_CLOSE, kernel);
+    cv.GaussianBlur(tinyBg, tinyBg, new cv.Size(0, 0), 2.25, 2.25, cv.BORDER_DEFAULT);
     bg = new cv.Mat();
-    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(61, 61));
-    cv.morphologyEx(aligned, bg, cv.MORPH_CLOSE, kernel);
-    cv.GaussianBlur(bg, bg, new cv.Size(0, 0), 9, 9, cv.BORDER_DEFAULT);
-    kernel.delete();
+    cv.resize(tinyBg, bg, new cv.Size(tpl.ref_w, tpl.ref_h), 0, 0, cv.INTER_LINEAR);
+    tiny.delete(); tinyBg.delete(); kernel.delete();
     const n = tpl.ref_w * tpl.ref_h;
     const norm = new Float32Array(n);
     for (let i = 0; i < n; i++) norm[i] = Math.min(1.2, aligned.data[i] / Math.max(bg.data[i], 1));
