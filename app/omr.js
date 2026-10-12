@@ -251,7 +251,7 @@ function forcedOrient(cv, small, tpl, k) {
 // Độ lệch được khớp bằng đa thức bậc hai (6 hệ số cho mỗi trục), rồi ảnh được lấy mẫu lại.
 export const MARK_MAX_DIST = 14;     // khoảng cách tối đa để ghép một ô (px khung chuẩn)
 export const MARK_MAX_SHIFT = 20;    // độ lệch tối đa cho phép ở mọi điểm (px)
-export const MARK_MIN_PAIRS = 12;    // ít hơn số này thì giữ nguyên ảnh đã nắn 4 góc
+export const MARK_MIN_PAIRS = 16;    // ít hơn số này thì giữ nguyên ảnh đã nắn 4 góc (đa thức bậc ba có 10 hệ số)
 export const CURL_WARN = 6;          // độ cong trung bình (px) từ mức này trở lên: báo lùi máy ra xa
 
 // Ghép từng mốc với ô vuông gần nhất. Trả về [{x, y, dx, dy}] với (dx, dy) = vị trí thấy - vị trí mẫu.
@@ -268,10 +268,12 @@ export function matchMarks(squares, marks) {
   return pairs;
 }
 
-// Cơ sở đa thức bậc hai, chuẩn hóa theo kích thước khung chuẩn
+// Cơ sở đa thức bậc ba, chuẩn hóa theo kích thước khung chuẩn.
+// Méo của ống kính góc rộng có dạng bậc ba theo bán kính, nên bậc hai không đủ.
+const NB = 10;
 function polyBasis(x, y, w, h) {
   const u = x / w, v = y / h;
-  return [1, u, v, u * u, u * v, v * v];
+  return [1, u, v, u * u, u * v, v * v, u * u * u, u * u * v, u * v * v, v * v * v];
 }
 
 // Giải hệ 6x6 bằng khử Gauss có chọn phần tử trội
@@ -294,17 +296,17 @@ function solveLinear(A, b) {
 
 // Hệ số đa thức của độ lệch theo x và theo y
 export function fitDisplacement(pairs, w, h) {
-  const A = Array.from({ length: 6 }, () => new Array(6).fill(0));
-  const bx = new Array(6).fill(0), by = new Array(6).fill(0);
+  const A = Array.from({ length: NB }, () => new Array(NB).fill(0));
+  const bx = new Array(NB).fill(0), by = new Array(NB).fill(0);
   for (const p of pairs) {
     const f = polyBasis(p.x, p.y, w, h);
-    for (let i = 0; i < 6; i++) {
-      for (let j = 0; j < 6; j++) A[i][j] += f[i] * f[j];
+    for (let i = 0; i < NB; i++) {
+      for (let j = 0; j < NB; j++) A[i][j] += f[i] * f[j];
       bx[i] += f[i] * p.dx;
       by[i] += f[i] * p.dy;
     }
   }
-  for (let i = 0; i < 6; i++) A[i][i] += 1e-6;   // ổn định khi số điểm ít
+  for (let i = 0; i < NB; i++) A[i][i] += 1e-6;   // ổn định khi số điểm ít
   return { cx: solveLinear(A, bx), cy: solveLinear(A, by) };
 }
 
@@ -313,30 +315,38 @@ export function displacementAt(fit, x, y, w, h) {
   const f = polyBasis(x, y, w, h);
   const clamp = (v) => Math.max(-MARK_MAX_SHIFT, Math.min(MARK_MAX_SHIFT, v));
   let dx = 0, dy = 0;
-  for (let i = 0; i < 6; i++) { dx += fit.cx[i] * f[i]; dy += fit.cy[i] * f[i]; }
+  for (let i = 0; i < NB; i++) { dx += fit.cx[i] * f[i]; dy += fit.cy[i] * f[i]; }
   return [clamp(dx), clamp(dy)];
 }
 
 // Nắn lại ảnh đã nắn 4 góc theo các ô vuông đen phụ. Trả về {aligned, used, dev}; thiếu điểm thì giữ nguyên.
 function refineWithMarks(cv, aligned, tpl) {
-  if (!tpl.marks || !tpl.marks.length) return { aligned, used: 0, dev: 0 };
+  if (!tpl.marks || !tpl.marks.length) return { aligned, used: 0, dev: 0, residual: 0 };
   const anchors = [...tpl.marks, ...Object.values(tpl.fiducials)];
   const pairs = matchMarks(candidateSquares(cv, aligned), anchors);
   // Độ cong: độ lệch trung bình của các ô vuông so với mẫu, đo trước khi nắn lại (px khung chuẩn)
   let sq = 0;
   for (const p of pairs) sq += p.dx * p.dx + p.dy * p.dy;
   const dev = pairs.length ? Math.sqrt(sq / pairs.length) : 0;
-  if (pairs.length < MARK_MIN_PAIRS) return { aligned, used: pairs.length, dev };
+  if (pairs.length < MARK_MIN_PAIRS) return { aligned, used: pairs.length, dev, residual: 0 };
   const w = aligned.cols, h = aligned.rows;
-  const { cx, cy } = fitDisplacement(pairs, tpl.ref_w, tpl.ref_h);
+  const fit = fitDisplacement(pairs, tpl.ref_w, tpl.ref_h);
+  const { cx, cy } = fit;
+  let se = 0;   // sai số còn lại tại các ô vuông sau khi khớp
+  for (const p of pairs) {
+    const [fx, fy] = displacementAt(fit, p.x, p.y, tpl.ref_w, tpl.ref_h);
+    se += (p.dx - fx) ** 2 + (p.dy - fy) ** 2;
+  }
+  const residual = Math.sqrt(se / pairs.length);
   const mapX = new Float32Array(w * h), mapY = new Float32Array(w * h);
   for (let y = 0; y < h; y++) {
     const v = y / tpl.ref_h;
     for (let x = 0; x < w; x++) {
       const u = x / tpl.ref_w;
       const uu = u * u, uv = u * v, vv = v * v;
-      let dx = cx[0] + cx[1] * u + cx[2] * v + cx[3] * uu + cx[4] * uv + cx[5] * vv;
-      let dy = cy[0] + cy[1] * u + cy[2] * v + cy[3] * uu + cy[4] * uv + cy[5] * vv;
+      const uuu = uu * u, uuv = uu * v, uvv = u * vv, vvv = vv * v;
+      let dx = cx[0] + cx[1] * u + cx[2] * v + cx[3] * uu + cx[4] * uv + cx[5] * vv + cx[6] * uuu + cx[7] * uuv + cx[8] * uvv + cx[9] * vvv;
+      let dy = cy[0] + cy[1] * u + cy[2] * v + cy[3] * uu + cy[4] * uv + cy[5] * vv + cy[6] * uuu + cy[7] * uuv + cy[8] * uvv + cy[9] * vvv;
       dx = dx > MARK_MAX_SHIFT ? MARK_MAX_SHIFT : dx < -MARK_MAX_SHIFT ? -MARK_MAX_SHIFT : dx;
       dy = dy > MARK_MAX_SHIFT ? MARK_MAX_SHIFT : dy < -MARK_MAX_SHIFT ? -MARK_MAX_SHIFT : dy;
       mapX[y * w + x] = x + dx;
@@ -348,7 +358,7 @@ function refineWithMarks(cv, aligned, tpl) {
   const out = new cv.Mat();
   cv.remap(aligned, out, map1, map2, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
   map1.delete(); map2.delete(); aligned.delete();
-  return { aligned: out, used: pairs.length, dev };
+  return { aligned: out, used: pairs.length, dev, residual };
 }
 
 // Đọc toàn bộ phiếu: nhận ảnh xám full-res, trả về { aligned (Mat 1656x2344 xám), darkness, k, f }.
@@ -357,7 +367,7 @@ export function processPhoto(cv, fullGray, tpl, forcedK = null) {
   const smallH = Math.round(fullGray.rows * scale);
   const small = new cv.Mat();
   cv.resize(fullGray, small, new cv.Size(DETECT_W, smallH), 0, 0, cv.INTER_AREA);
-  let rotated = null, aligned = null, bg = null, marks = 0, dev = 0;
+  let rotated = null, aligned = null, bg = null, marks = 0, dev = 0, residual = 0;
   try {
     const { k, f: fSmall } = forcedK == null ? orientUpright(cv, small, tpl) : forcedOrient(cv, small, tpl, forcedK);
     // xoay ảnh full-res cùng chiều với ảnh dò
@@ -378,6 +388,7 @@ export function processPhoto(cv, fullGray, tpl, forcedK = null) {
     aligned = refined.aligned;
     marks = refined.used;
     dev = refined.dev;
+    residual = refined.residual;
 
     // chuẩn hóa ánh sáng: chia cho nền ước lượng (đóng hình thái + làm mờ), giấy ~ 1.0
     // Nền tính trên ảnh nhỏ 1/4 rồi phóng to lại: nền vốn trơn nên kết quả gần như giống, nhưng nhanh hơn nhiều trên điện thoại.
@@ -395,7 +406,7 @@ export function processPhoto(cv, fullGray, tpl, forcedK = null) {
     const darkness = readDarkness(tpl, norm, tpl.ref_w, tpl.ref_h);
     const alignedOut = aligned;
     aligned = null;                       // quyền sở hữu chuyển cho người gọi
-    return { aligned: alignedOut, darkness, k, marks, dev };
+    return { aligned: alignedOut, darkness, k, marks, dev, residual };
   } finally {
     small.delete();
     if (rotated) rotated.delete();

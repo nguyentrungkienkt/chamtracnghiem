@@ -45,3 +45,22 @@ test("độ lệch bị chặn trong giới hạn", () => {
   const [dx, dy] = displacementAt(fit, 800, 1100, W, H);
   assert.ok(Math.abs(dx) <= MARK_MAX_SHIFT && Math.abs(dy) <= MARK_MAX_SHIFT);
 });
+
+test("khớp đa thức bậc ba khôi phục méo dạng thùng (theo bán kính)", () => {
+  const cx0 = W / 2, cy0 = H / 2, R = Math.hypot(cx0, cy0);
+  const k = 0.002;  // méo thùng: độ lệch tăng theo r³ (ở góc khoảng 10 px)
+  const truth = (x, y) => {
+    const dxr = x - cx0, dyr = y - cy0, r2 = (dxr * dxr + dyr * dyr) / (R * R);
+    return [-dxr * k * r2 * 6, -dyr * k * r2 * 6];
+  };
+  const pairs = TPL.marks.map(([x, y]) => {
+    const [dx, dy] = truth(x, y);
+    return { x, y, dx, dy };
+  });
+  const fit = fitDisplacement(pairs, W, H);
+  for (const [x, y] of [[200, 300], [1400, 1900], [830, 1170]]) {
+    const [dx, dy] = displacementAt(fit, x, y, W, H);
+    const [tx, ty] = truth(x, y);
+    assert.ok(Math.abs(dx - tx) < 0.5 && Math.abs(dy - ty) < 0.5, `${dx},${dy} vs ${tx},${ty}`);
+  }
+});

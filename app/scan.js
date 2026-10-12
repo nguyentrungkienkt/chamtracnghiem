@@ -12,7 +12,7 @@ import { CURL_WARN } from "./omr.js";
 // Ghi chú độ cong: báo lùi máy ra xa khi phiếu cong nhiều
 const curlNote = (res) => (res.dev >= CURL_WARN
   ? `phiếu cong ${res.dev.toFixed(1)} px, lùi máy ra xa và để phẳng rồi chụp lại`
-  : `nắn theo ${res.marks} ô vuông, độ cong ${res.dev.toFixed(1)} px`);
+  : `nắn theo ${res.marks} ô vuông, cong ${res.dev.toFixed(1)} px, sai số sau nắn ${res.residual.toFixed(1)} px`);
 import { fmt } from "./shared.js";
 
 const PREVIEW_W = 480;        // ảnh xem trước để dò góc nhanh
