@@ -8,9 +8,9 @@ import {
   parseAnswerRows, validateStructure, maxScore, defaultScoring,
 } from "../lib/answer-key.js";
 
+// Chỉ có một mẫu phiếu (phiếu quét 300 dpi)
 const TEMPLATES = {
-  ptltn2: { name: "PTLTN mẫu 2", p1Max: 40, p2Max: 8, p3Max: 6 },
-  cv1239: { name: "CV1239", p1Max: 40, p2Max: 8, p3Max: 6 },
+  ptltn2: { name: "Phiếu quét 300 dpi", p1Max: 40, p2Max: 8, p3Max: 6 },
 };
 
 const view = document.getElementById("view");
@@ -169,10 +169,6 @@ function renderNew() {
       <label>Tên phiên</label>
       <input id="f-name" value="${esc(d.name)}" placeholder="Ví dụ: Vật Lý 12 – Đợt 1">
 
-      <label>Loại phiếu</label>
-      <div class="seg">
-        ${Object.entries(TEMPLATES).map(([k, t]) => `<button data-tpl="${k}" class="${d.template === k ? "on" : ""}">${t.name}</button>`).join("")}
-      </div>
     </div>
 
     <div class="card">
@@ -217,7 +213,6 @@ function renderNew() {
   };
   document.getElementById("btn-back").onclick = () => { state.screen = "list"; render(); };
   document.getElementById("f-name").oninput = (e) => { d.name = e.target.value; };
-  view.querySelectorAll("[data-tpl]").forEach((b) => b.onclick = () => { d.template = b.dataset.tpl; renderNew(); });
   bind("f-p1c", "p1Count", (v) => Math.floor(Number(v)));
   bind("f-p2c", "p2Count", (v) => Math.floor(Number(v)));
   bind("f-p3c", "p3Count", (v) => Math.floor(Number(v)));

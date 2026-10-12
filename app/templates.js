@@ -11,9 +11,9 @@ export async function loadTemplates() {
 }
 
 // Mã mẫu trong app -> id trong templates.json
-export const TEMPLATE_ID = { ptltn2: 2, cv1239: 1 };
+export const TEMPLATE_ID = { ptltn2: 2 };   // chỉ dùng một mẫu: phiếu quét 300 dpi
 
 export async function getTemplate(key) {
-  const id = TEMPLATE_ID[key];
+  const id = TEMPLATE_ID[key] ?? TEMPLATE_ID.ptltn2;   // bài cũ dùng mẫu khác vẫn đọc theo mẫu duy nhất
   return (await loadTemplates()).find((t) => t.id === id);
 }

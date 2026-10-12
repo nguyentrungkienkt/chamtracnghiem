@@ -246,6 +246,100 @@ function forcedOrient(cv, small, tpl, k) {
   try { return { k, f: detectOn(cv, g, tpl) }; } finally { g.delete(); }
 }
 
+// ---------------------------------------------------------------- nắn theo các ô vuông đen phụ
+// Sau khi nắn theo 4 góc, mỗi ô vuông mẫu (tpl.marks) được ghép với ô vuông tìm thấy gần nhất.
+// Độ lệch được khớp bằng đa thức bậc hai (6 hệ số cho mỗi trục), rồi ảnh được lấy mẫu lại.
+export const MARK_MAX_DIST = 14;     // khoảng cách tối đa để ghép một ô (px khung chuẩn)
+export const MARK_MAX_SHIFT = 20;    // độ lệch tối đa cho phép ở mọi điểm (px)
+export const MARK_MIN_PAIRS = 12;    // ít hơn số này thì giữ nguyên ảnh đã nắn 4 góc
+
+// Ghép từng mốc với ô vuông gần nhất. Trả về [{x, y, dx, dy}] với (dx, dy) = vị trí thấy - vị trí mẫu.
+export function matchMarks(squares, marks) {
+  const pairs = [];
+  for (const m of marks) {
+    let best = null, bd = Infinity;
+    for (const s of squares) {
+      const d = Math.hypot(s.x - m[0], s.y - m[1]);
+      if (d < bd) { bd = d; best = s; }
+    }
+    if (best && bd <= MARK_MAX_DIST) pairs.push({ x: m[0], y: m[1], dx: best.x - m[0], dy: best.y - m[1] });
+  }
+  return pairs;
+}
+
+// Cơ sở đa thức bậc hai, chuẩn hóa theo kích thước khung chuẩn
+function polyBasis(x, y, w, h) {
+  const u = x / w, v = y / h;
+  return [1, u, v, u * u, u * v, v * v];
+}
+
+// Giải hệ 6x6 bằng khử Gauss có chọn phần tử trội
+function solveLinear(A, b) {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    const d = M[c][c] || 1e-12;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / d;
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((row, i) => row[n] / (row[i] || 1e-12));
+}
+
+// Hệ số đa thức của độ lệch theo x và theo y
+export function fitDisplacement(pairs, w, h) {
+  const A = Array.from({ length: 6 }, () => new Array(6).fill(0));
+  const bx = new Array(6).fill(0), by = new Array(6).fill(0);
+  for (const p of pairs) {
+    const f = polyBasis(p.x, p.y, w, h);
+    for (let i = 0; i < 6; i++) {
+      for (let j = 0; j < 6; j++) A[i][j] += f[i] * f[j];
+      bx[i] += f[i] * p.dx;
+      by[i] += f[i] * p.dy;
+    }
+  }
+  for (let i = 0; i < 6; i++) A[i][i] += 1e-6;   // ổn định khi số điểm ít
+  return { cx: solveLinear(A, bx), cy: solveLinear(A, by) };
+}
+
+// Độ lệch tại một điểm, bị chặn trong MARK_MAX_SHIFT
+export function displacementAt(fit, x, y, w, h) {
+  const f = polyBasis(x, y, w, h);
+  const clamp = (v) => Math.max(-MARK_MAX_SHIFT, Math.min(MARK_MAX_SHIFT, v));
+  let dx = 0, dy = 0;
+  for (let i = 0; i < 6; i++) { dx += fit.cx[i] * f[i]; dy += fit.cy[i] * f[i]; }
+  return [clamp(dx), clamp(dy)];
+}
+
+// Nắn lại ảnh đã nắn 4 góc theo các ô vuông đen phụ. Nếu không đủ điểm thì giữ nguyên.
+function refineWithMarks(cv, aligned, tpl) {
+  if (!tpl.marks || !tpl.marks.length) return aligned;
+  const anchors = [...tpl.marks, ...Object.values(tpl.fiducials)];
+  const pairs = matchMarks(candidateSquares(cv, aligned), anchors);
+  if (pairs.length < MARK_MIN_PAIRS) return aligned;
+  const w = aligned.cols, h = aligned.rows;
+  const fit = fitDisplacement(pairs, tpl.ref_w, tpl.ref_h);
+  const mapX = new Float32Array(w * h), mapY = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const [dx, dy] = displacementAt(fit, x, y, tpl.ref_w, tpl.ref_h);
+      mapX[y * w + x] = x + dx;
+      mapY[y * w + x] = y + dy;
+    }
+  }
+  const map1 = new cv.Mat(h, w, cv.CV_32FC1), map2 = new cv.Mat(h, w, cv.CV_32FC1);
+  map1.data32F.set(mapX); map2.data32F.set(mapY);
+  const out = new cv.Mat();
+  cv.remap(aligned, out, map1, map2, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
+  map1.delete(); map2.delete(); aligned.delete();
+  return out;
+}
+
 // Đọc toàn bộ phiếu: nhận ảnh xám full-res, trả về { aligned (Mat 1656x2344 xám), darkness, k, f }.
 export function processPhoto(cv, fullGray, tpl, forcedK = null) {
   const scale = DETECT_W / fullGray.cols;
@@ -269,6 +363,7 @@ export function processPhoto(cv, fullGray, tpl, forcedK = null) {
     aligned = new cv.Mat();
     cv.warpPerspective(rotated, aligned, M, new cv.Size(tpl.ref_w, tpl.ref_h), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
     src.delete(); dst.delete(); M.delete();
+    aligned = refineWithMarks(cv, aligned, tpl);
 
     // chuẩn hóa ánh sáng: chia cho nền ước lượng (đóng hình thái + làm mờ), giấy ~ 1.0
     // Nền tính trên ảnh nhỏ 1/4 rồi phóng to lại: nền vốn trơn nên kết quả gần như giống, nhưng nhanh hơn nhiều trên điện thoại.

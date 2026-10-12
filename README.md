@@ -8,7 +8,7 @@ không có máy chủ, không đồng bộ, dữ liệu chỉ nằm trên máy.
 2. Android (Chrome): menu ⋮ → "Thêm vào Màn hình chính". iPhone (Safari): nút chia sẻ → "Thêm vào Màn hình chính".
 
 ## Hiện có
-- Tạo phiên chấm: tên, loại phiếu (PTLTN mẫu 2, CV1239), số câu và điểm từng phần, bảng điểm Phần II.
+- Tạo phiên chấm: tên, số câu và điểm từng phần, bảng điểm Phần II.
 - Nhập đáp án từ file Excel theo mã đề (định dạng "đảo đề"), kiểm tra và báo lỗi theo dòng.
 - Chấm bằng camera: tự chụp khi thấy đủ 4 góc và phiếu đứng yên khoảng 3 giây. Xử lý ảnh bằng OpenCV.js, chấm ngay trên máy.
 - Ảnh đã chấm: xanh = đúng, đỏ = sai, viền xanh nét đứt = đáp án đúng, vàng = cần xem.
