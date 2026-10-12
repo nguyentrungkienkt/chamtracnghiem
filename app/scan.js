@@ -9,15 +9,16 @@ import { getTemplate } from "./templates.js";
 import { fmt } from "./shared.js";
 
 const PREVIEW_W = 480;        // ảnh xem trước để dò góc nhanh
-const STABLE_MS = 3000;       // phiếu khớp khung và đứng yên bao lâu thì tự chụp
-const MOVE_PX = 8;            // dịch chuyển góc tối đa (px, trên ảnh xem trước) vẫn tính là đứng yên
+const STABLE_MS = 3000;       // sau mỗi lần chấm, chờ bao lâu để thay phiếu khác vào
 const ALIGN_TOL = 0.14;       // sai lệch cho phép giữa góc phát hiện và ô vuông hướng dẫn (tỷ lệ theo chiều rộng xem trước). Lệch trong mức này vẫn được nắn về ảnh chuẩn.
 const TICK_MS = 200;          // chu kỳ phân tích khung hình
 const CORNERS = ["tl", "tr", "br", "bl"];
 const CORNER_TEXT = { tl: "trên trái", tr: "trên phải", br: "dưới phải", bl: "dưới trái" };
 
 export function mountScan(root, { session, onSaved }) {
-  let stream = null, timer = null, busy = false, analysing = false, lastCorners = null, stableSince = 0, tpl = null, cvReady = false;
+  let stream = null, timer = null, busy = false, analysing = false, tpl = null, cvReady = false;
+  let armed = true;          // có phiếu mới trong khung chưa (phiếu vừa chấm phải được lấy ra trước)
+  let cooldownUntil = 0;     // sau mỗi lần chấm, chờ STABLE_MS để thay phiếu
   const video = document.createElement("video");
   video.setAttribute("playsinline", ""); video.muted = true; video.autoplay = true;
   const small = document.createElement("canvas");
@@ -99,7 +100,7 @@ export function mountScan(root, { session, onSaved }) {
     await video.play().catch(() => {});
     root.querySelector("#cam-on").disabled = true;
     root.querySelector("#cam-off").disabled = false;
-    stableSince = 0; lastCorners = null;
+    armed = true; cooldownUntil = 0;
     timer = setInterval(tick, TICK_MS);
     status("Đưa phiếu cho 4 ô vuông khớp khung");
   }
@@ -128,33 +129,38 @@ export function mountScan(root, { session, onSaved }) {
       const { quality: q, corners } = await analyseFrame(img);
       if (busy) return;   // đang chụp, bỏ kết quả khung này
       if (!corners) {
-        lastCorners = null; stableSince = 0; setGuideState("");
+        armed = true; setGuideState("");
         status("Chưa thấy đủ 4 góc của phiếu. Đưa phiếu vào khung, đủ sáng.");
         return;
       }
       if (!shapeOk(corners, tpl)) {
-        lastCorners = null; stableSince = 0; setGuideState("");
+        armed = true; setGuideState("");
         status("Phiếu bị nghiêng hoặc xoay. Đặt phiếu thẳng, đầu phiếu ở trên.");
         return;
       }
       const align = alignHint(corners, guidePoints(h));
       if (!align.ok) {
-        lastCorners = null; stableSince = 0;
+        armed = true;
         setGuideState("near");
         status(align.text);
         return;
       }
       setGuideState("ok");
-      if (q.sharp < QUALITY.sharpMin) { stableSince = 0; status("Khớp khung, nhưng hình còn mờ. Giữ máy yên."); return; }
-      if (q.bright < QUALITY.brightMin) { stableSince = 0; status("Khớp khung, nhưng thiếu sáng. Bật đèn hoặc ra chỗ sáng hơn."); return; }
-      if (q.bright > QUALITY.brightMax) { stableSince = 0; status("Khớp khung, nhưng quá sáng. Tránh ánh đèn chiếu trực tiếp."); return; }
-      const moved = lastCorners ? maxMove(corners, lastCorners) : Infinity;
-      lastCorners = corners;
-      if (moved > MOVE_PX || !stableSince) { stableSince = Date.now(); status("Khớp khung. Giữ yên phiếu…"); return; }
-      const held = Date.now() - stableSince;
-      const left = Math.max(0, Math.ceil((STABLE_MS - held) / 1000));
-      if (held >= STABLE_MS) { capture(); return; }
-      status(`Khớp khung. Giữ yên, chụp sau ${left} giây`);
+      if (q.sharp < QUALITY.sharpMin) { status("Khớp khung, nhưng hình còn mờ. Giữ máy yên."); return; }
+      if (q.bright < QUALITY.brightMin) { status("Khớp khung, nhưng thiếu sáng. Bật đèn hoặc ra chỗ sáng hơn."); return; }
+      if (q.bright > QUALITY.brightMax) { status("Khớp khung, nhưng quá sáng. Tránh ánh đèn chiếu trực tiếp."); return; }
+      // Đã đọc đủ 4 góc: chụp ngay. Phiếu vừa chụp phải được lấy ra trước khi chụp tờ tiếp theo.
+      if (!armed) {
+        const wait = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000));
+        status(wait > 0 ? `Lấy phiếu vừa chấm ra, đưa phiếu mới vào… ${wait}` : "Lấy phiếu vừa chấm ra để chụp phiếu tiếp theo");
+        return;
+      }
+      if (Date.now() < cooldownUntil) {
+        const wait = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000));
+        status(`Đưa phiếu mới vào khung… ${wait}`);
+        return;
+      }
+      capture();
     } catch (e) {
       console.warn(e);
       status("Đang đọc khung hình…");
@@ -197,10 +203,6 @@ export function mountScan(root, { session, onSaved }) {
     return okRatio && (tilt <= 15 || tilt >= 75);
   }
 
-  function maxMove(a, b) {
-    return Math.max(...CORNERS.map((k) => Math.hypot(a[k].x - b[k].x, a[k].y - b[k].y)));
-  }
-
   // Chụp khung hình đầy đủ rồi chấm
   async function capture() {
     busy = true;
@@ -235,7 +237,8 @@ export function mountScan(root, { session, onSaved }) {
 
   function resume() {
     busy = false;
-    lastCorners = null; stableSince = 0;
+    armed = false;
+    cooldownUntil = Date.now() + STABLE_MS;   // thời gian để thay phiếu khác vào
     if (stream) timer = setInterval(tick, TICK_MS);
   }
 
