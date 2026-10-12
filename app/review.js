@@ -75,7 +75,7 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
       }
       for (const d of grade.digitFlags) pending.push(d);
     } else {
-      for (const k of Object.keys(read)) if (read[k].kind === "digit" && read[k].status !== CLEAR) pending.push(k);
+      for (const k of Object.keys(read)) if (read[k].kind === "digit" && read[k].status !== CLEAR && !k.startsWith("sbd:")) pending.push(k);
     }
     const uniq = [...new Set(pending)];
     const status = grade && uniq.length === 0 && warnings.length === 0 ? "GRADED" : "NEEDS_REVIEW";

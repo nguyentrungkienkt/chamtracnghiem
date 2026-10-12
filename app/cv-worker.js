@@ -69,7 +69,7 @@ self.onmessage = async (e) => {
       const w = res.aligned.cols, h = res.aligned.rows;
       const data = new Uint8Array(res.aligned.data);   // bản sao, tách khỏi bộ nhớ wasm
       res.aligned.delete();
-      post({ id, ok: true, result: { data, w, h, darkness: res.darkness, k: res.k } }, [data.buffer]);
+      post({ id, ok: true, result: { data, w, h, darkness: res.darkness, k: res.k, marks: res.marks } }, [data.buffer]);
       return;
     }
     throw new Error(`Thao tác không hỗ trợ: ${op}`);

@@ -221,9 +221,9 @@ export function mountScan(root, { session, onSaved }) {
       const alignedBlob = await canvasToBlob(alignedCanvas, 0.9);
       const sheet = await gradeAndSave({ tpl, darkness: res.darkness, alignedBlob, photoBlob, k: res.k });
       if (sheet.status === "GRADED") {
-        say(`Đã chấm mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm`, "ok");
+        say(`Đã chấm mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm · nắn theo ${res.marks} ô vuông`, "ok");
       } else {
-        say(`Mã ${sheet.code === "?" ? "chưa đọc được" : sheet.code}: cần xem lại. Xem trong tab Bài.`, "err");
+        say(`Mã ${sheet.code === "?" ? "chưa đọc được" : sheet.code}: cần xem lại (nắn theo ${res.marks} ô vuông). Xem trong tab Bài.`, "err");
       }
       status("Đưa phiếu tiếp theo cho 4 ô vuông khớp khung");
       onSaved && onSaved(sheet);
