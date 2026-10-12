@@ -101,6 +101,14 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
 
   let showGrid = false;
 
+  // Độ đen cao nhất và thứ nhì của một ô, để biết vì sao ô bị đánh dấu cần xem
+  const darkDiag = (k) => {
+    const r = current.read[k];
+    if (!r || !r.scores) return "không có";
+    const sc = [...r.scores].sort((a, b) => b - a);
+    return `${sc[0].toFixed(2)}/${(sc[1] ?? 0).toFixed(2)}`;
+  };
+
   // Phiếu bị ngược: xử lý lại từ ảnh chụp gốc với chiều đã đổi 180 độ, rồi chấm lại.
   async function rotate180() { await reprocess(((sheet.k ?? 0) + 2) % 4, "#rv-rot", "Xoay 180°"); }
 
@@ -158,7 +166,7 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
           <p class="muted">Chạm vào ô để đổi đáp án: xoay vòng qua các lựa chọn và trống.</p>
           ${current.pending.map((k) => `
             <button class="row between pick" data-k="${k}">
-              <span>${itemName(k)}</span><b>${eff(k) || "trống"}</b>
+              <span>${itemName(k)}<br><small class="muted">độ đen cao/nhì: ${darkDiag(k)}</small></span><b>${eff(k) || "trống"}</b>
             </button>`).join("")}
         </div>` : `<div class="card ok">Không còn ô cần xem.</div>`}
       <button class="primary big" id="rv-save">Lưu</button>
