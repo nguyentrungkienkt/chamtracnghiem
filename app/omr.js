@@ -252,7 +252,7 @@ function forcedOrient(cv, small, tpl, k) {
 export const MARK_MAX_DIST = 14;     // khoảng cách tối đa để ghép một ô (px khung chuẩn)
 export const MARK_MAX_SHIFT = 20;    // độ lệch tối đa cho phép ở mọi điểm (px)
 export const MARK_MIN_PAIRS = 16;    // ít hơn số này thì giữ nguyên ảnh đã nắn 4 góc (đa thức bậc ba có 10 hệ số)
-export const CURL_WARN = 6;          // độ cong trung bình (px) từ mức này trở lên: báo lùi máy ra xa
+export const RESID_WARN = 2.5;       // sai số còn lại sau khi nắn (px) từ mức này trở lên: báo chụp lại
 
 // Ghép từng mốc với ô vuông gần nhất. Trả về [{x, y, dx, dy}] với (dx, dy) = vị trí thấy - vị trí mẫu.
 export function matchMarks(squares, marks) {

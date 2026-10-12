@@ -1,18 +1,22 @@
 // Màn chấm bằng camera: khung hướng dẫn 4 ô vuông, dò góc, tự chụp khi phiếu khớp khung và đứng yên, rồi chấm.
 // Mã đề đọc từ chính phiếu, không chọn trước.
-import { QUALITY } from "./omr.js";
+import { QUALITY, RESID_WARN } from "./omr.js";
 import { ensureCv, analyseFrame, processPhoto } from "./cv-client.js";
 import { readItems, gradeSheet, readDigits } from "../lib/grading.js";
 import { findKeys } from "../lib/answer-key.js";
 import { grayToCanvas, canvasToBlob } from "./render.js";
 import { sheets, newId } from "./db.js";
 import { getTemplate } from "./templates.js";
-import { CURL_WARN } from "./omr.js";
 
-// Ghi chú độ cong: báo lùi máy ra xa khi phiếu cong nhiều
-const curlNote = (res) => (res.dev >= CURL_WARN
-  ? `phiếu cong ${res.dev.toFixed(1)} px, lùi máy ra xa và để phẳng rồi chụp lại`
-  : `nắn theo ${res.marks} ô vuông, cong ${res.dev.toFixed(1)} px, sai số sau nắn ${res.residual.toFixed(1)} px`);
+// Ghi chú hình học: số ô vuông đã dùng, độ cong trước nắn, sai số còn lại sau nắn
+const geomNote = (res) => `nắn ${res.marks} ô vuông · cong ${res.dev.toFixed(1)} px · sai số sau nắn ${res.residual.toFixed(1)} px`
+  + (res.residual >= RESID_WARN ? " (cao: nên chụp lại)" : "");
+
+// Độ đen cao nhất và thứ nhì của từng chữ số mã đề, để biết vì sao không đọc được
+const codeDiag = (read) => [1, 2, 3, 4].map((i) => {
+  const sc = [...(read[`code:${i}`]?.scores || [0, 0])].sort((a, b) => b - a);
+  return `vị trí ${i}: ${sc[0].toFixed(2)}/${sc[1].toFixed(2)}`;
+}).join("; ");
 import { fmt } from "./shared.js";
 
 const PREVIEW_W = 480;        // ảnh xem trước để dò góc nhanh
@@ -227,9 +231,11 @@ export function mountScan(root, { session, onSaved }) {
       const alignedBlob = await canvasToBlob(alignedCanvas, 0.9);
       const sheet = await gradeAndSave({ tpl, darkness: res.darkness, alignedBlob, photoBlob, k: res.k });
       if (sheet.status === "GRADED") {
-        say(`Đã chấm mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm · ${curlNote(res)}`, "ok");
+        say(`Đã chấm mã ${sheet.code}: <b>${fmt(sheet.total)}</b> điểm · ${geomNote(res)}`, "ok");
+      } else if (sheet.code === "?") {
+        say(`<b>Không đọc được mã đề</b>, phiếu chưa được chấm. Hãy chụp lại · ${geomNote(res)}`, "err");
       } else {
-        say(`Mã ${sheet.code === "?" ? "chưa đọc được" : sheet.code}: cần xem lại · ${curlNote(res)}. Xem trong tab Bài.`, "err");
+        say(`Mã ${sheet.code}: cần xem lại · ${geomNote(res)}. Xem trong tab Bài.`, "err");
       }
       status("Đưa phiếu tiếp theo cho 4 ô vuông khớp khung");
       onSaved && onSaved(sheet);
@@ -256,7 +262,7 @@ export function mountScan(root, { session, onSaved }) {
     const code = codeRead.ok ? codeRead.value : "?";
     const keys = codeRead.ok ? findKeys(session.keys, code) : null;
     const warnings = [];
-    if (!codeRead.ok) warnings.push("Không đọc đủ mã đề trên phiếu");
+    if (!codeRead.ok) warnings.push(`Không đọc đủ mã đề trên phiếu (độ đen: ${codeDiag(read)})`);
     else if (!keys) warnings.push(`Mã đề ${code} chưa có đáp án trong file`);
     let grade = null;
     if (keys) grade = gradeSheet(read, keys, session.structure, session.scoring);
