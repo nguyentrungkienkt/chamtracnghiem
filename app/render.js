@@ -62,7 +62,7 @@ function drawMark(ctx, x, y, r, mark) {
 }
 
 // Vẽ ảnh đã chấm. alignedBlob: ảnh xám đã nắn. decorations: danh sách {key, label, mark} từ grading.decorate.
-export async function drawGraded({ tpl, alignedBlob, decorations, scoreLines }) {
+export async function drawGraded({ tpl, alignedBlob, decorations, scoreLines, grid = false }) {
   const W = tpl.ref_w, H = tpl.ref_h;
   const canvas = document.createElement("canvas");
   canvas.width = W; canvas.height = H + 120;     // thêm dải chân trang để in điểm
@@ -70,6 +70,14 @@ export async function drawGraded({ tpl, alignedBlob, decorations, scoreLines }) 
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
   const img = await blobToImage(alignedBlob);
   ctx.drawImage(img, 0, 0, W, H);
+
+  if (grid) {
+    // Lưới kiểm tra căn chỉnh: vòng mảnh màu xanh dương tại mọi vị trí ô theo mẫu
+    ctx.strokeStyle = "rgba(0,120,255,0.8)"; ctx.lineWidth = 2;
+    for (const it of tpl.items) for (const [x, y] of it.centers) { ctx.beginPath(); ctx.arc(x, y, it.radius, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.fillStyle = "rgba(255,0,200,0.9)";
+    for (const f of Object.values(tpl.fiducials)) { ctx.beginPath(); ctx.arc(f[0], f[1], 8, 0, Math.PI * 2); ctx.fill(); }
+  }
 
   const items = new Map(tpl.items.map((it) => [it.key, it]));
   for (const d of decorations) {

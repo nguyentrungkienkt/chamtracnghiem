@@ -89,11 +89,12 @@ export async function renderReview(root, session, sheetId, onBack) {
   const eff = (k) => (k in sheet.overrides ? sheet.overrides[k] : (current.read[k].status === CLEAR ? current.read[k].suggestion : ""));
   const cycleOf = (k) => CYCLE[current.read[k]?.kind || "option"];
 
+  let showGrid = false;
   async function paint() {
     const decos = current.grade ? decorate(tpl, current.read, current.keys, session.structure) : [];
     const canvas = await drawGraded({
       tpl, alignedBlob: sheet.alignedBlob, decorations: decos,
-      scoreLines: scoreLines(sheet, session),
+      scoreLines: scoreLines(sheet, session), grid: showGrid,
     });
     canvas.style.width = "100%";
     canvas.style.height = "auto";
@@ -105,6 +106,7 @@ export async function renderReview(root, session, sheetId, onBack) {
       <div class="row between"><button id="rv-back">← Danh sách</button><button class="danger" id="rv-del">Xóa bài</button></div>
       <h1>Bài mã ${sheet.code} ${statusTag(sheet.status)}</h1>
       <div id="rv-img" class="imgbox"></div>
+      <div class="row"><button id="rv-grid">${showGrid ? "Ẩn lưới ô" : "Hiện lưới ô (kiểm tra căn chỉnh)"}</button></div>
       <div class="card">
         <div class="total">Tổng: <b>${fmt(sheet.total)}</b> / ${fmt(session.maxTotal)}</div>
         ${current.warnings.map((w) => `<div class="err">${w}</div>`).join("")}
@@ -123,6 +125,7 @@ export async function renderReview(root, session, sheetId, onBack) {
       <button class="primary big" id="rv-save">Lưu</button>
     `;
     root.querySelector("#rv-back").onclick = onBack;
+    root.querySelector("#rv-grid").onclick = () => { showGrid = !showGrid; layout(); paint(); };
     root.querySelector("#rv-code").onchange = (e) => { sheet.code = e.target.value; refresh(); };
     root.querySelectorAll("[data-k]").forEach((b) => b.onclick = () => {
       const k = b.dataset.k;
