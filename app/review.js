@@ -64,7 +64,16 @@ export async function renderReview(root, session, sheetId, onBack, onNext = () =
     const warnings = [];
     if (!findKeys(session.keys, sheet.code)) warnings.push(`Mã đề ${sheet.code} chưa có đáp án`);
     const cr = readDigits(read, "code", 4);
-    if (!cr.ok) warnings.push("Mã đề trên phiếu chưa đọc đủ");
+    if (!cr.ok) {
+      // Chẩn đoán: độ đen cao nhất và thứ nhì của từng chữ số mã đề
+      const detail = cr.unread.map((i) => {
+        const r = read[`code:${i}`];
+        if (!r || !r.scores) return `vị trí ${i}: không có dữ liệu`;
+        const sc = [...r.scores].sort((a, b) => b - a);
+        return `vị trí ${i}: ${sc[0].toFixed(2)}/${sc[1].toFixed(2)}`;
+      }).join("; ");
+      warnings.push(`Mã đề trên phiếu chưa đọc đủ (độ đen cao/thứ nhì: ${detail})`);
+    }
     else if (cr.value !== sheet.code) warnings.push(`Mã đề trên phiếu là ${cr.value}, khác mã đang chọn ${sheet.code}`);
     const grade = findKeys(session.keys, sheet.code) ? gradeSheet(read, keys, session.structure, session.scoring) : null;
     const pending = [];
