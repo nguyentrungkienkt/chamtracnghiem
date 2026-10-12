@@ -13,12 +13,15 @@ không có máy chủ, không đồng bộ, dữ liệu chỉ nằm trên máy.
 - Lưu phiên trên máy, xem và xóa phiên.
 
 ## Sẽ làm
-- Chấm bằng camera (tự chụp khi đủ 4 góc), tô màu ảnh đã chấm.
+- Chấm bằng camera (tự chụp khi đủ 4 góc) và xử lý ảnh bằng OpenCV.js. Logic chấm đã có trong `lib/grading.js`.
+- Vẽ ảnh đã chấm từ danh sách nét vẽ.
 - Kiểm tra ô vàng, danh sách bài, xuất ảnh và CSV.
 - Nhập đáp án bằng tay và bằng mã QR.
 
 ## Phát triển
-- `lib/answer-key.js`: đọc và kiểm tra đáp án, tính điểm. Không phụ thuộc giao diện.
+- `lib/answer-key.js`: đọc và kiểm tra đáp án theo mã đề, tính điểm tối đa.
+- `lib/grading.js`: phân loại ô (trống, tô rõ, tô nhiều, mờ), chấm theo quy tắc đã chốt, và danh sách nét vẽ cho ảnh đã chấm. Không phụ thuộc camera hay giao diện.
+- `lib/templates.json`: hình học hai mẫu phiếu (tọa độ ô, nhãn, bán kính). Xuất từ bản Windows, không có dữ liệu học sinh.
 - `app/`: giao diện và lưu trữ cục bộ.
 - Kiểm thử: `npm test` (cần Node 18 trở lên).
 
