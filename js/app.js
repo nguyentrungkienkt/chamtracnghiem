@@ -177,21 +177,34 @@ function stopCamera() {
 async function capture(session) {
   const video = document.getElementById("cam");
   const msg = document.getElementById("scan-msg");
-  if (!video || !video.videoWidth) { msg.innerHTML = `<span class="err">Camera chưa sẵn sàng.</span>`; return; }
-  const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext("2d").drawImage(video, 0, 0);
-  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
-  if (!blob) { msg.innerHTML = `<span class="err">Không lưu được ảnh. Thử lại.</span>`; return; }
-  const id = newId();
-  await queue.put({
-    id, name: `${session.id}__${Date.now()}__${id.slice(0, 8)}.jpg`, mime: "image/jpeg",
-    blob, sessionId: session.id, createdAt: Date.now(),
-  });
-  msg.innerHTML = `<span class="ok">Đã chụp.</span>`;
-  refreshCounts();
-  sendQueue();
+  const btn = document.getElementById("btn-shot");
+  if (!video || !video.videoWidth) {
+    msg.innerHTML = `<span class="err">Camera chưa sẵn sàng. Đợi hình hiện rõ rồi bấm Chụp lại.</span>`;
+    return;
+  }
+  btn.disabled = true;
+  msg.textContent = "Đang chụp…";
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    if (!blob) throw new Error("Không tạo được ảnh từ camera");
+    const id = newId();
+    await queue.put({
+      id, name: `${session.id}__${Date.now()}__${id.slice(0, 8)}.jpg`, mime: "image/jpeg",
+      blob, sessionId: session.id, createdAt: Date.now(),
+    });
+    msg.innerHTML = `<span class="ok">Đã chụp. Đưa phiếu tiếp theo vào khung.</span>`;
+    refreshCounts();
+    sendQueue();
+  } catch (e) {
+    console.warn(e);
+    msg.innerHTML = `<span class="err">Không lưu được ảnh: ${esc(e.message || e)}. Thử lại.</span>`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function renderConnect() {
