@@ -12,6 +12,7 @@
 - `js/app.js`: các màn hình và luồng quét.
 - `js/db.js`: hàng đợi gửi trong IndexedDB, không mất khi mất mạng.
 - `js/relay.js`: gọi relay Drive. Địa chỉ và mã truy cập lưu trên máy, không nằm trong mã nguồn.
+- `js/corners.js`: dò 4 ô vuông căn chỉnh trên khung hình (OpenCV.js, nạp trên trang). Khi thấy đủ 4 ô và phiếu đứng yên 3 giây thì tự chụp, rồi nghỉ 3 giây để thay phiếu.
 - `sw.js`, `manifest.webmanifest`: chạy được như ứng dụng và mở được khi mất mạng. Khi sửa mã, tăng `CACHE` trong `sw.js`.
 - `relay/Code.gs`: Apps Script chạy dưới tài khoản quản trị, giữ quyền Drive.
 

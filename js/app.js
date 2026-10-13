@@ -2,6 +2,7 @@
 // Điện thoại không chấm. Việc chấm và kiểm tra làm trên máy Windows.
 import { queue, newId } from "./db.js";
 import { getConfig, saveConfig, clearConfig, ping, uploadBlob } from "./relay.js";
+import { candidateSquares, outerCorners, toGray } from "./corners.js";
 
 // Loại phiếu. Chỉ khai báo tên và mã; hình học và đáp án do máy Windows quản lý.
 const SHEET_TYPES = {
@@ -12,7 +13,14 @@ const SESSIONS_KEY = "chamtn.sessions";
 const view = document.getElementById("view");
 const tabs = document.querySelectorAll(".tabbar button");
 
-const state = { tab: "phien", sessionId: null, stream: null, sending: false };
+const state = { tab: "phien", sessionId: null, stream: null, sending: false, detect: null };
+
+// Thời gian giữ yên để tự chụp, thời gian nghỉ để thay phiếu, và độ dịch chuyển coi là đứng yên
+const STEADY_MS = 3000;
+const COOLDOWN_MS = 3000;
+const MOVE_TOL = 0.01;
+const DETECT_W = 640;
+const DETECT_EVERY_MS = 300;
 
 /* ---------- phiên (lưu trên máy này) ---------- */
 
@@ -145,11 +153,31 @@ function renderScan() {
     <div class="card"><div id="scan-msg" class="muted"></div><div id="pending-count" class="muted"></div></div>`;
   document.getElementById("btn-pick").onclick = () => setTab("phien");
   document.getElementById("btn-shot").onclick = () => capture(session);
-  startCamera();
+  startCamera(session);
   refreshCounts();
 }
 
-async function startCamera() {
+let cvPromise = null;
+// Nạp OpenCV.js trên trang để dò 4 ô vuông. File khoảng 10 MB, chỉ nạp một lần.
+function loadOpenCv() {
+  if (!cvPromise) {
+    cvPromise = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js";
+      s.async = true;
+      s.onload = () => {
+        const t = setInterval(() => {
+          if (window.cv && window.cv.Mat) { clearInterval(t); resolve(window.cv); }
+        }, 100);
+      };
+      s.onerror = () => { cvPromise = null; reject(new Error("Không tải được OpenCV.js")); };
+      document.head.appendChild(s);
+    });
+  }
+  return cvPromise;
+}
+
+async function startCamera(session) {
   const video = document.getElementById("cam");
   const msg = document.getElementById("cam-msg");
   const btn = document.getElementById("btn-shot");
@@ -159,18 +187,94 @@ async function startCamera() {
       audio: false,
     });
     video.srcObject = state.stream;
-    msg.textContent = "Đưa phiếu vào khung rồi bấm Chụp.";
     btn.disabled = false;
   } catch (e) {
     console.warn(e);
     msg.innerHTML = `<span class="err">Không mở được camera. Kiểm tra quyền camera của trình duyệt.</span>`;
+    return;
+  }
+  msg.textContent = "Đang nạp bộ nhận diện… Bấm Chụp nếu cần chụp tay.";
+  try {
+    await loadOpenCv();
+    msg.textContent = "Đưa phiếu vào khung. Khi thấy đủ 4 ô vuông và phiếu đứng yên 3 giây, app tự chụp.";
+    startDetect(session);
+  } catch (e) {
+    console.warn(e);
+    msg.innerHTML = `<span class="err">Không nạp được bộ nhận diện: ${esc(e.message)}. Vẫn có thể bấm Chụp bằng tay.</span>`;
   }
 }
 
 function stopCamera() {
+  stopDetect();
   if (state.stream) {
     state.stream.getTracks().forEach((t) => t.stop());
     state.stream = null;
+  }
+}
+
+function startDetect(session) {
+  stopDetect();
+  state.detect = { timer: null, lastPts: null, since: 0, cooldownUntil: 0, busy: false };
+  state.detect.timer = setInterval(() => detectTick(session), DETECT_EVERY_MS);
+}
+
+function stopDetect() {
+  if (state.detect && state.detect.timer) clearInterval(state.detect.timer);
+  state.detect = null;
+}
+
+// Mỗi lượt: dò 4 ô vuông trên khung hình nhỏ. Nếu đủ 4 ô và không dịch chuyển trong STEADY_MS thì tự chụp.
+// Sau khi chụp, nghỉ COOLDOWN_MS để người chấm thay phiếu khác.
+function detectTick(session) {
+  const d = state.detect;
+  const video = document.getElementById("cam");
+  const hint = document.getElementById("cam-msg");
+  if (!d || !video || !video.videoWidth || d.busy || !window.cv) return;
+  const now = Date.now();
+  if (now < d.cooldownUntil) {
+    hint.textContent = `Thay phiếu khác… ${Math.ceil((d.cooldownUntil - now) / 1000)} giây`;
+    return;
+  }
+  const cv = window.cv;
+  const w = DETECT_W;
+  const h = Math.round(video.videoHeight * DETECT_W / video.videoWidth);
+  const small = document.createElement("canvas");
+  small.width = w;
+  small.height = h;
+  small.getContext("2d").drawImage(video, 0, 0, w, h);
+  let rgba = null, gray = null;
+  try {
+    rgba = cv.imread(small);
+    gray = toGray(cv, rgba);
+    const corners = outerCorners(candidateSquares(cv, gray), gray.cols);
+    if (!corners) {
+      d.lastPts = null;
+      d.since = 0;
+      hint.textContent = "Đưa phiếu vào khung, cần thấy đủ 4 ô vuông.";
+      return;
+    }
+    const pts = [corners.tl, corners.tr, corners.br, corners.bl];
+    const moved = d.lastPts
+      ? Math.max(...pts.map((p, i) => Math.hypot(p.x - d.lastPts[i].x, p.y - d.lastPts[i].y)))
+      : Infinity;
+    if (moved > MOVE_TOL * w || !d.since) d.since = now;
+    d.lastPts = pts;
+    const held = now - d.since;
+    if (held >= STEADY_MS) {
+      d.busy = true;
+      d.since = 0;
+      d.lastPts = null;
+      d.cooldownUntil = now + COOLDOWN_MS;
+      hint.textContent = "Đã nhận đủ 4 ô, đang chụp…";
+      capture(session).finally(() => { d.busy = false; });
+    } else {
+      hint.textContent = `Đã thấy 4 ô. Giữ yên ${Math.ceil((STEADY_MS - held) / 1000)} giây…`;
+    }
+  } catch (e) {
+    console.warn(e);
+  } finally {
+    if (rgba) rgba.delete();
+    if (gray) gray.delete();
   }
 }
 
