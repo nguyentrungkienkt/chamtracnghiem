@@ -173,28 +173,49 @@ function renderScan() {
   refreshCounts();
 }
 
+// Chọn camera chính (1x). Camera góc rộng (0.5x) làm mép phiếu bị cong, nên tránh khi có thể.
+const WIDE_RE = /ultra|wide|0\.5|tele|macro/i;
+
+async function openCamera(deviceId) {
+  const video = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  if (deviceId) video.deviceId = { exact: deviceId };
+  else video.facingMode = { ideal: "environment" };
+  return navigator.mediaDevices.getUserMedia({ video, audio: false });
+}
+
 async function startCamera(session) {
   const video = document.getElementById("cam");
   const msg = document.getElementById("cam-msg");
   const btn = document.getElementById("btn-shot");
   try {
-    state.stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: false,
-    });
+    state.stream = await openCamera();
+    let track = state.stream.getVideoTracks()[0];
+    // Nếu nhãn camera là góc rộng, đổi sang camera sau khác (nhãn chỉ có sau khi đã cấp quyền)
+    if (WIDE_RE.test(track.label)) {
+      const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+      const main = cams.find((d) => /back|rear|environment/i.test(d.label) && !WIDE_RE.test(d.label));
+      if (main && main.deviceId !== track.getSettings().deviceId) {
+        state.stream.getTracks().forEach((t) => t.stop());
+        state.stream = await openCamera(main.deviceId);
+        track = state.stream.getVideoTracks()[0];
+      }
+    }
+    // Zoom về 1x nếu thiết bị cho phép
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (caps.zoom) {
+      const z = Math.min(caps.zoom.max, Math.max(caps.zoom.min, 1));
+      try { await track.applyConstraints({ advanced: [{ zoom: z }] }); } catch (e) { /* bỏ qua */ }
+    }
+    try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch (e) { /* không hỗ trợ */ }
     video.srcObject = state.stream;
     btn.disabled = false;
-    // Lấy nét liên tục để ảnh chụp sắc nét hơn (bỏ qua nếu thiết bị không hỗ trợ)
-    const track = state.stream.getVideoTracks()[0];
-    try {
-      await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
-    } catch (e) { /* không hỗ trợ */ }
+    const zoomNote = caps.zoom ? `, zoom ${caps.zoom.min}–${caps.zoom.max}` : "";
+    msg.textContent = `Camera: ${track.label || "không rõ tên"}${zoomNote}. Đang nạp bộ nhận diện…`;
   } catch (e) {
     console.warn(e);
     msg.innerHTML = `<span class="err">Không mở được camera. Kiểm tra quyền camera của trình duyệt.</span>`;
     return;
   }
-  msg.textContent = "Đang nạp bộ nhận diện… Có thể bấm Chụp tay trong lúc chờ.";
   startDetect(session);
 }
 
