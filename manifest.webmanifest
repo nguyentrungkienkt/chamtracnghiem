@@ -1,0 +1,9 @@
+{
+  "name": "Quét phiếu trắc nghiệm",
+  "short_name": "Quét phiếu",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1f5fbf",
+  "lang": "vi"
+}

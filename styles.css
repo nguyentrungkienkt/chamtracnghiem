@@ -1,0 +1,38 @@
+:root {
+  --bg: #ffffff; --fg: #1b1f24; --mute: #5f6670; --line: #d6dbe1;
+  --accent: #1f5fbf; --ok: #1a7f37; --err: #b42318; --card: #f6f8fa;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --fg: #e7ebf0; --mute: #98a2ad; --line: #2f353d;
+    --accent: #5b9bff; --ok: #4ac26b; --err: #ff7b72; --card: #1d2228;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c; --fg: #e7ebf0; --mute: #98a2ad; --line: #2f353d;
+  --accent: #5b9bff; --ok: #4ac26b; --err: #ff7b72; --card: #1d2228;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, sans-serif; }
+.wrap { padding: 16px; padding-bottom: 88px; max-width: 640px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 8px 0 12px; }
+h2 { font-size: 18px; margin: 4px 0 8px; }
+.muted { color: var(--mute); font-size: 14px; }
+.ok { color: var(--ok); }
+.err { color: var(--err); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+.item { display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.between { justify-content: space-between; }
+button { font: inherit; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.big { width: 100%; padding: 16px; font-size: 18px; }
+button:disabled { opacity: .5; cursor: default; }
+label { display: block; font-size: 14px; color: var(--mute); margin: 10px 0 4px; }
+input[type=text], input[type=url], input[type=password], input:not([type]), select {
+  width: 100%; font: inherit; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit;
+}
+video, canvas.preview { width: 100%; border-radius: 12px; background: #000; }
+.tabbar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--card); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+.tabbar button { flex: 1; border: 0; border-radius: 0; padding: 14px 4px; }
+.tabbar button.on { color: var(--accent); font-weight: 600; }
