@@ -31,6 +31,13 @@ test("ghép mốc với ô vuông gần nhất và bỏ ô quá xa", () => {
   assert.deepEqual([pairs[0].dx, pairs[0].dy], [3, -2]);
 });
 
+test("mốc lệch tới 45 px (ảnh méo) vẫn được ghép, nhưng bán kính cũ 30 px thì bỏ sót", () => {
+  const marks = [[500, 500]];
+  const squares = [{ x: 545, y: 500 }];
+  assert.equal(matchMarks(squares, marks, 30).length, 0);
+  assert.equal(matchMarks(squares, marks).length, 1);
+});
+
 test("nội suy đi đúng qua từng mốc", () => {
   const truth = (x, y) => [4 * Math.sin((x / W) * Math.PI), 2 + 6 * (y / H) * (y / H)];
   const pairs = pairsFrom(truth);

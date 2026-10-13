@@ -4,6 +4,7 @@
 
 export const DETECT_W = 800;          // chiều rộng ảnh dùng để dò góc và hướng
 export const ORIENT_MIN = 0.6;        // điểm vạch chỉ hướng tối thiểu
+export const ORIENT_RADIUS = 0.03;     // bán kính tìm vạch chỉ hướng, tỷ lệ theo chiều rộng ảnh dò (trước đây 0.012: quá hẹp khi ảnh méo)
 export const INNER_RATIO = 0.6;       // đo vùng lõi bubble, bỏ viền
 export const CANON_W = 1656, CANON_H = 2344;
 
@@ -177,7 +178,8 @@ export function orientationScore(cv, gray, tpl, f) {
   if (!tpl.orient || !tpl.orient.length) return 0;
   const { w, h, dens } = darkDensity(cv, gray);
   const H = canonToImage(cv, f, tpl);
-  const r = Math.max(6, Math.round(0.012 * w));
+  // Bán kính tìm vạch chỉ hướng theo chiều rộng ảnh: đủ lớn để chứa méo ống kính và góc nghiêng (dự đoán lệch 15–25 px ở 800 px)
+  const r = Math.max(6, Math.round(ORIENT_RADIUS * w));
   const vals = [];
   for (const [x, y] of tpl.orient) {
     const d = H[6] * x + H[7] * y + H[8];
@@ -249,7 +251,7 @@ function forcedOrient(cv, small, tpl, k) {
 // ---------------------------------------------------------------- nắn theo các ô vuông đen phụ
 // Sau khi nắn theo 4 góc, mỗi ô vuông mẫu (tpl.marks) được ghép với ô vuông tìm thấy gần nhất.
 // Độ lệch được khớp bằng đa thức bậc hai (6 hệ số cho mỗi trục), rồi ảnh được lấy mẫu lại.
-export const MARK_SEARCH_DIST = 30;  // tìm ô vuông gần mốc trong bán kính này (đủ rộng để chứa độ cong)
+export const MARK_SEARCH_DIST = 50;  // tìm ô vuông gần mốc trong bán kính này (khung chuẩn): dự đoán từ 4 góc còn lệch 30–50 px khi ảnh méo
 export const MARK_TRACK_DIST = 6;    // sau khi khớp, chỉ nhận ô vuông nằm trong bán kính này quanh vị trí dự đoán (lượt đầu)
 export const MARK_TRACK_WIDE = 10;   // các lượt sau: mô hình đã tốt hơn nên nhận ô vuông lệch tới bán kính này (mốc khác cách >100 px, không nhầm)
 export const MARK_TRACK_ROUNDS = 3;  // số lượt bám lại và nội suy lại
