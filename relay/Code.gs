@@ -32,6 +32,8 @@ function doPost(e) {
         return json_({ ok: true, id: folder.getId(), name: folder.getName() });
       case 'upload':
         return json_(uploadFile_(folder, req));
+      case 'folders':
+        return json_(listFolders_(base));
       case 'list':
         return json_(listFiles_(folder));
       case 'get':
@@ -88,6 +90,13 @@ function uploadFile_(folder, req) {
   var blob = Utilities.newBlob(bytes, req.mime || 'image/jpeg', sanitize_(req.name));
   var file = folder.createFile(blob);
   return { ok: true, id: file.getId(), name: file.getName() };
+}
+
+function listFolders_(base) {
+  var out = [];
+  var it = base.getFolders();
+  while (it.hasNext()) out.push(it.next().getName());
+  return { ok: true, folders: out };
 }
 
 function listFiles_(folder) {

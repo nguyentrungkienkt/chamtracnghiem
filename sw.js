@@ -1,5 +1,5 @@
 // Lưu vỏ ứng dụng để mở được khi mất mạng. Không lưu các lệnh gọi tới relay.
-const CACHE = "quet-phieu-v7";
+const CACHE = "quet-phieu-v8";
 const SHELL = [
   "./", "./index.html", "./styles.css", "./manifest.webmanifest",
   "./js/app.js", "./js/db.js", "./js/relay.js", "./js/corners.js", "./js/detect-worker.js",

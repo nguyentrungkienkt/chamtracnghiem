@@ -168,7 +168,15 @@ function renderScan() {
     </div>
     <div class="card"><div id="scan-msg" class="muted"></div><div id="pending-count" class="muted"></div></div>`;
   document.getElementById("btn-pick").onclick = () => setTab("phien");
-  document.getElementById("btn-shot").onclick = () => capture(session);
+  document.getElementById("btn-shot").onclick = () => {
+    // Chụp tay: nếu vừa thấy đủ 4 ô thì cắt đúng phiếu theo 4 ô; không thì chụp toàn khung
+    const q = state.detect && state.detect.lastQuad;
+    if (q && Date.now() - q.t < 1500) capture(session, q.pts);
+    else {
+      setHint("Chưa thấy đủ 4 ô vuông, chụp toàn khung hình");
+      capture(session);
+    }
+  };
   startCamera(session);
   refreshCounts();
 }
@@ -330,6 +338,8 @@ async function detectTick() {
   }
   const pts = res.corners;
   const t = Date.now();
+  // Lưu 4 góc theo toạ độ video để nút Chụp tay dùng đúng khi vừa thấy đủ 4 ô
+  d.lastQuad = { t, pts: pts.map((p) => ({ x: p.x * video.videoWidth / w, y: p.y * video.videoHeight / h })) };
   // So với vị trí lúc bắt đầu giữ (không so với khung trước) để rung tay nhỏ không làm reset
   const ref = d.anchor;
   const moved = ref
