@@ -4,9 +4,13 @@ import { queue, newId } from "./db.js";
 import { getConfig, saveConfig, clearConfig, ping, uploadBlob } from "./relay.js";
 
 // Loại phiếu. Chỉ khai báo tên và mã; hình học và đáp án do máy Windows quản lý.
+// Chỉ liệt kê phiếu tự thiết kế theo công văn 1239 (hai mẫu đang lưu hành).
+// Phiên cũ có loại khác vẫn hiển thị được nhưng không chọn được nữa.
 const SHEET_TYPES = {
-  ptltn2: { name: "Phiếu quét 300 dpi (mẫu 2)" },
+  cv1239_redesign: { name: "CV1239 - mẫu thiết kế lại" },
+  cv1239_bo: { name: "CV1239 - mẫu của Bộ" },
 };
+const DEFAULT_SHEET_TYPE = "cv1239_redesign";
 
 const SESSIONS_KEY = "chamtn.sessions";
 const view = document.getElementById("view");
@@ -109,7 +113,7 @@ function renderSessions() {
       : list.map((s) => `
         <button class="card item" data-id="${esc(s.id)}">
           <b>${esc(s.name)}</b>
-          <div class="muted">${esc(SHEET_TYPES[s.sheetType]?.name || s.sheetType)} · ${new Date(s.createdAt).toLocaleDateString("vi-VN")}</div>
+          <div class="muted">${esc(SHEET_TYPES[s.sheetType]?.name || "Loại phiếu cũ (không còn dùng)")} · ${new Date(s.createdAt).toLocaleDateString("vi-VN")}</div>
         </button>`).join("")}
     <div id="new-root"></div>`;
   document.getElementById("btn-new").onclick = () => renderNewForm();
@@ -126,7 +130,7 @@ function renderNewForm() {
       <label>Tên phiên<input id="s-name" type="text" placeholder="Ví dụ: Toán 12A - Kiểm tra 45 phút"></label>
       <label>Loại phiếu
         <select id="s-type">
-          ${Object.entries(SHEET_TYPES).map(([k, v]) => `<option value="${esc(k)}">${esc(v.name)}</option>`).join("")}
+          ${Object.entries(SHEET_TYPES).map(([k, v]) => `<option value="${esc(k)}" ${k === DEFAULT_SHEET_TYPE ? "selected" : ""}>${esc(v.name)}</option>`).join("")}
         </select>
       </label>
       <div class="row"><button class="primary" id="s-save">Tạo phiên</button><button id="s-cancel">Hủy</button></div>
