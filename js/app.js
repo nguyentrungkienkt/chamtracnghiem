@@ -266,7 +266,11 @@ function detectTick(session) {
       d.lastPts = null;
       d.cooldownUntil = now + COOLDOWN_MS;
       hint.textContent = "Đã nhận đủ 4 ô, đang chụp…";
-      capture(session).finally(() => { d.busy = false; });
+      const fullPts = pts.map((p) => ({
+        x: p.x * video.videoWidth / w,
+        y: p.y * video.videoHeight / h,
+      }));
+      capture(session, fullPts).finally(() => { d.busy = false; });
     } else {
       hint.textContent = `Đã thấy 4 ô. Giữ yên ${Math.ceil((STEADY_MS - held) / 1000)} giây…`;
     }
@@ -278,7 +282,34 @@ function detectTick(session) {
   }
 }
 
-async function capture(session) {
+// Nắn phối cảnh phần trong bốn ô định vị ra ảnh chữ nhật, chỉ giữ phiếu.
+// quad: bốn góc (tâm các ô vuông) theo thứ tự tl, tr, br, bl, theo toạ độ ảnh gốc.
+// Nới ra 4% từ tâm để giữ trọn mép phiếu quanh các ô.
+async function warpToPaper(canvas, quad) {
+  const cv = window.cv;
+  const cx = quad.reduce((a, p) => a + p.x, 0) / 4;
+  const cy = quad.reduce((a, p) => a + p.y, 0) / 4;
+  const EXPAND = 1.04;
+  const [tl, tr, br, bl] = quad.map((p) => ({ x: cx + (p.x - cx) * EXPAND, y: cy + (p.y - cy) * EXPAND }));
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const W = Math.round(Math.max(dist(tl, tr), dist(bl, br)));
+  const H = Math.round(Math.max(dist(tl, bl), dist(tr, br)));
+  const src = cv.imread(canvas);
+  const srcQ = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
+  const dstQ = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, W, 0, W, H, 0, H]);
+  const M = cv.getPerspectiveTransform(srcQ, dstQ);
+  const dst = new cv.Mat();
+  const out = document.createElement("canvas");
+  try {
+    cv.warpPerspective(src, dst, M, new cv.Size(W, H), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
+    cv.imshow(out, dst);
+  } finally {
+    src.delete(); srcQ.delete(); dstQ.delete(); M.delete(); dst.delete();
+  }
+  return new Promise((resolve) => out.toBlob(resolve, "image/jpeg", 0.9));
+}
+
+async function capture(session, quad = null) {
   const video = document.getElementById("cam");
   const msg = document.getElementById("scan-msg");
   const btn = document.getElementById("btn-shot");
@@ -293,7 +324,11 @@ async function capture(session) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext("2d").drawImage(video, 0, 0);
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    let blob = null;
+    if (quad) {
+      try { blob = await warpToPaper(canvas, quad); } catch (e) { console.warn(e); }
+    }
+    if (!blob) blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
     if (!blob) throw new Error("Không tạo được ảnh từ camera");
     const id = newId();
     await queue.put({
