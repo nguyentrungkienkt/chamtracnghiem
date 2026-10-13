@@ -17,7 +17,7 @@ const state = { tab: "phien", sessionId: null, stream: null, sending: false, det
 // Thời gian giữ yên để tự chụp, thời gian nghỉ để thay phiếu, và độ dịch chuyển coi là đứng yên
 const STEADY_MS = 3000;
 const COOLDOWN_MS = 3000;
-const MOVE_TOL = 0.01;
+const MOVE_TOL = 0.03;   // dịch chuyển tối đa (theo chiều rộng khung) so với vị trí lúc bắt đầu giữ
 const DETECT_W = 480;
 const DETECT_TIMEOUT_MS = 8000;
 const MAX_SAVE_H = 1800;   // chiều cao tối đa của ảnh lưu (px)
@@ -323,20 +323,24 @@ async function detectTick() {
   if (state.detect !== d) return; // đã dừng trong lúc chờ
   if (!res.corners) {
     d.lastPts = null;
+    d.anchor = null;
     d.since = 0;
     setHint(`Đưa phiếu vào khung, cần thấy đủ 4 ô vuông. (đang thấy ${res.count} ô vuông)`);
     return;
   }
   const pts = res.corners;
   const t = Date.now();
-  const moved = d.lastPts
-    ? Math.max(...pts.map((p, i) => Math.hypot(p.x - d.lastPts[i].x, p.y - d.lastPts[i].y)))
+  // So với vị trí lúc bắt đầu giữ (không so với khung trước) để rung tay nhỏ không làm reset
+  const ref = d.anchor;
+  const moved = ref
+    ? Math.max(...pts.map((p, i) => Math.hypot(p.x - ref[i].x, p.y - ref[i].y)))
     : Infinity;
-  if (moved > MOVE_TOL * w || !d.since) d.since = t;
+  if (moved > MOVE_TOL * w || !d.since) { d.since = t; d.anchor = pts; }
   d.lastPts = pts;
   const held = t - d.since;
   if (held >= STEADY_MS) {
     d.since = 0;
+    d.anchor = null;
     d.lastPts = null;
     d.cooldownUntil = t + COOLDOWN_MS;
     const full = pts.map((p) => ({ x: p.x * video.videoWidth / w, y: p.y * video.videoHeight / h }));
