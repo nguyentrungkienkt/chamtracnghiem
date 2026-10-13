@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   matchMarks, fitWarp, warpAt, trackPairs, looResidual,
-  MARK_MAX_SHIFT, MARK_TRACK_DIST, MARK_TRACK_WIDE, MARK_MIN_PAIRS,
+  MARK_MAX_SHIFT, MARK_TRACK_DIST, MARK_TRACK_WIDE, MARK_MIN_PAIRS, outerCorners,
 } from "../app/omr.js";
 import { classify, BLANK, CLEAR, UNCERTAIN } from "../lib/grading.js";
 
@@ -119,4 +119,14 @@ test("ngưỡng ô: ô trống độ đen 0.2 không bị tô vàng, ô tô đ�
   // ô tô nhạt trên ảnh điện thoại (0.25–0.34) nhưng các ô khác gần như trắng
   assert.equal(classify([0.29, 0.04, 0.03, 0.03], labels).status, CLEAR);
   assert.equal(classify([0.31, 0.01, 0.01, 0.04], labels).status, CLEAR);
+});
+
+test("góc trên trái bị mất: suy ra từ ba góc còn lại; có dấu gần đó thì lấy dấu đó", () => {
+  // phiếu nghiêng nhẹ trên ảnh 800 px rộng: TR, BR, BL nhận được, TL không
+  const tr = { x: 759, y: 370 }, br = { x: 750, y: 1370 }, bl = { x: 36, y: 1379 };
+  const noise = [{ x: 122, y: 137 }, { x: 400, y: 700 }];   // vết tối không phải dấu
+  const c = outerCorners([tr, br, bl, ...noise], 800);
+  assert.deepEqual([c.tl.x, c.tl.y], [45, 379]);             // TR + BL - BR
+  const withTl = outerCorners([tr, br, bl, { x: 40, y: 383 }], 800);
+  assert.deepEqual([withTl.tl.x, withTl.tl.y], [40, 383]);   // dấu thật gần vị trí dự đoán
 });

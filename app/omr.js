@@ -112,31 +112,42 @@ function squaresFrom(cv, bin, w) {
   return out;
 }
 
-// Bốn dấu ngoài cùng: TL min(x+y), TR max(x-y), BR max(x+y), BL max(y-x)
-export function outerCorners(cands) {
-  if (cands.length < 4) return null;
-  const pick = {
-    tl: cands.reduce((a, b) => (b.x + b.y < a.x + a.y ? b : a)),
-    tr: cands.reduce((a, b) => (b.x - b.y > a.x - a.y ? b : a)),
-    br: cands.reduce((a, b) => (b.x + b.y > a.x + a.y ? b : a)),
-    bl: cands.reduce((a, b) => (b.y - b.x > a.y - a.x ? b : a)),
-  };
-  if (new Set(Object.values(pick)).size < 4) return null;
-  return pick;
+// Góc trên trái thường bị mờ hoặc lệch sáng nên không luôn được nhận ra. Dự đoán từ ba góc còn lại
+// (hình bình hành: TL = TR + BL - BR); nếu có dấu gần vị trí dự đoán thì lấy dấu đó, không thì dùng vị trí dự đoán.
+const TL_TOL = 0.12;   // bán kính tìm dấu quanh vị trí dự đoán, tỷ lệ theo cạnh ngắn của ảnh dò
+function topLeftFrom(cands, tr, br, bl, tol) {
+  const pred = { x: tr.x + bl.x - br.x, y: tr.y + bl.y - br.y };
+  let best = null, bd = Infinity;
+  for (const c of cands) {
+    const d = Math.hypot(c.x - pred.x, c.y - pred.y);
+    if (d < bd) { bd = d; best = c; }
+  }
+  return best && bd <= tol ? { x: best.x, y: best.y } : pred;
 }
 
-// Dấu gần vị trí chuẩn nhất trong từng góc. Thiếu góc nào thì ném lỗi kèm danh sách góc thiếu.
+// Ba dấu ngoài cùng (TR max(x-y), BR max(x+y), BL max(y-x)) và góc TL suy ra. Trả về null nếu không đủ.
+export function outerCorners(cands, w) {
+  if (cands.length < 3) return null;
+  const tr = cands.reduce((a, b) => (b.x - b.y > a.x - a.y ? b : a));
+  const br = cands.reduce((a, b) => (b.x + b.y > a.x + a.y ? b : a));
+  const bl = cands.reduce((a, b) => (b.y - b.x > a.y - a.x ? b : a));
+  if (new Set([tr, br, bl]).size < 3) return null;
+  const tl = topLeftFrom(cands, tr, br, bl, TL_TOL * w);
+  return { tl, tr, br, bl };
+}
+
+// Dấu gần vị trí chuẩn nhất trong từng góc. Góc TL suy ra từ ba góc kia. Thiếu góc nào thì ném lỗi kèm danh sách góc thiếu.
 export function findFiducials(cands, tpl, w, h) {
   const found = {}, missing = [];
-  for (const name of ["tl", "tr", "br", "bl"]) {
+  for (const name of ["tr", "br", "bl"]) {
     const [ux, uy] = tpl.fiducials[name];
     const ex = (ux / tpl.ref_w) * w, ey = (uy / tpl.ref_h) * h;
     let best = null, bestD = Infinity;
     for (const c of cands) {
-      if ((name === "tl" || name === "bl") && c.x > w / 2) continue;
-      if ((name === "tr" || name === "br") && c.x < w / 2) continue;
-      if ((name === "tl" || name === "tr") && c.y > h / 2) continue;
-      if ((name === "bl" || name === "br") && c.y < h / 2) continue;
+      if (name === "bl" && c.x > w / 2) continue;
+      if (name === "tr" || name === "br") { if (c.x < w / 2) continue; }
+      if (name === "tr") { if (c.y > h / 2) continue; }
+      if (name === "br" || name === "bl") { if (c.y < h / 2) continue; }
       const d = Math.hypot(c.x - ex, c.y - ey);
       if (d < bestD) { best = c; bestD = d; }
     }
@@ -146,6 +157,7 @@ export function findFiducials(cands, tpl, w, h) {
   if (missing.length) {
     throw new AlignError(`Thiếu dấu căn chỉnh góc ${missing.map((m) => CORNER_NAMES[m]).join(", ")}`, missing);
   }
+  found.tl = topLeftFrom(cands, found.tr, found.br, found.bl, TL_TOL * Math.min(w, h));
   return found;
 }
 
@@ -225,7 +237,7 @@ export function orientUpright(cv, small, tpl) {
     const g = rotateK(cv, small, k);
     try {
       const cands = candidateSquares(cv, g);
-      const corners = outerCorners(cands);
+      const corners = outerCorners(cands, g.cols);
       if (corners) {
         const score = orientationScore(cv, g, tpl, corners);
         if (score > best.score) best = { k, score, f: null };

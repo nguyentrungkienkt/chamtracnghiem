@@ -49,7 +49,7 @@ self.onmessage = async (e) => {
       rgba.delete();
       try {
         const quality = M.frameQuality(gray);
-        const corners = M.outerCorners(M.candidateSquares(cv, gray));
+        const corners = M.outerCorners(M.candidateSquares(cv, gray), gray.cols);
         post({ id, ok: true, result: { quality, corners } });
       } finally {
         gray.delete();
