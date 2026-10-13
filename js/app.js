@@ -20,6 +20,8 @@ const COOLDOWN_MS = 3000;
 const MOVE_TOL = 0.01;
 const DETECT_W = 480;
 const DETECT_TIMEOUT_MS = 8000;
+const MAX_SAVE_H = 1800;   // chiều cao tối đa của ảnh lưu (px)
+const SAVE_QUALITY = 0.85; // chất lượng JPEG khi lưu
 const DETECT_EVERY_MS = 300;
 
 /* ---------- phiên (lưu trên máy này) ---------- */
@@ -33,25 +35,38 @@ function saveSessions(list) {
 function currentSession() {
   return loadSessions().find((s) => s.id === state.sessionId) || null;
 }
+// Tên thư mục phiên trên Drive: tên phiên + 6 ký tự đầu của id để không trùng
+function sessionFolder(name, id) {
+  return `${name} [${id.slice(0, 6)}]`;
+}
+
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 /* ---------- gửi hàng đợi lên Drive ---------- */
 
+const SEND_PARALLEL = 3;
+
+// Gửi song song tối đa SEND_PARALLEL mục để giảm thời gian chờ mạng.
 async function sendQueue() {
   if (state.sending || !getConfig() || !navigator.onLine) return;
   state.sending = true;
   try {
     const items = await queue.all();
-    for (const item of items) {
-      try {
-        await uploadBlob(item.blob, item.name, item.mime);
-        await queue.remove(item.id);
-      } catch (e) {
-        console.warn(e);
-        break; // mất mạng hoặc lỗi relay: thử lại sau
-      }
+    let failed = false;
+    for (let i = 0; i < items.length && !failed; i += SEND_PARALLEL) {
+      const batch = items.slice(i, i + SEND_PARALLEL);
+      await Promise.all(batch.map(async (item) => {
+        try {
+          await uploadBlob(item.blob, item.name, item.mime, item.folder);
+          await queue.remove(item.id);
+        } catch (e) {
+          console.warn(e);
+          failed = true; // mất mạng hoặc lỗi relay: thử lại sau
+        }
+      }));
+      refreshCounts();
     }
   } finally {
     state.sending = false;
@@ -121,12 +136,13 @@ function renderNewForm() {
     const name = document.getElementById("s-name").value.trim();
     const sheetType = document.getElementById("s-type").value;
     if (!name) { document.getElementById("s-msg").innerHTML = `<span class="err">Nhập tên phiên.</span>`; return; }
-    const session = { id: newId(), name, sheetType, createdAt: Date.now() };
+    const id = newId();
+    const session = { id, name, sheetType, createdAt: Date.now(), folder: sessionFolder(name, id) };
     saveSessions([...loadSessions(), session]);
     // Gửi file mô tả phiên lên Drive để máy Windows đồng bộ
     const json = JSON.stringify(session, null, 2);
     await queue.put({
-      id: newId(), name: `phien_${session.id}.json`, mime: "application/json",
+      id: newId(), name: `phien_${session.id}.json`, mime: "application/json", folder: session.folder,
       blob: new Blob([json], { type: "application/json" }), createdAt: Date.now(),
     });
     state.sessionId = session.id;
@@ -168,6 +184,11 @@ async function startCamera(session) {
     });
     video.srcObject = state.stream;
     btn.disabled = false;
+    // Lấy nét liên tục để ảnh chụp sắc nét hơn (bỏ qua nếu thiết bị không hỗ trợ)
+    const track = state.stream.getVideoTracks()[0];
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+    } catch (e) { /* không hỗ trợ */ }
   } catch (e) {
     console.warn(e);
     msg.innerHTML = `<span class="err">Không mở được camera. Kiểm tra quyền camera của trình duyệt.</span>`;
@@ -305,17 +326,31 @@ async function detectTick() {
   }
 }
 
-// Nắn phối cảnh phần trong bốn ô định vị (chạy trong luồng nền). Trả về Blob JPEG.
+// Nắn phối cảnh phần trong bốn ô định vị (chạy trong luồng nền). Trả về { blob, sharp }.
 async function warpToPaper(canvas, quad) {
   const img = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
-  const r = await detectorCall("warp", { img, quad }, [img.data.buffer]);
+  const r = await detectorCall("warp", { img, quad, maxH: MAX_SAVE_H }, [img.data.buffer]);
   const out = document.createElement("canvas");
   out.width = r.w;
   out.height = r.h;
   out.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(r.data), r.w, r.h), 0, 0);
-  return new Promise((resolve) => out.toBlob(resolve, "image/jpeg", 0.9));
+  const blob = await new Promise((resolve) => out.toBlob(resolve, "image/jpeg", SAVE_QUALITY));
+  return { blob, sharp: r.sharp };
 }
 
+// Khung camera, thu nhỏ nếu quá lớn để file gửi nhanh hơn
+function grabFrame(video, maxLong) {
+  const k = Math.min(1, maxLong / Math.max(video.videoWidth, video.videoHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(video.videoWidth * k);
+  canvas.height = Math.round(video.videoHeight * k);
+  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Chụp hai khung cách nhau 300 ms rồi giữ khung nét hơn (khi có 4 ô), hoặc chụp một khung (chụp tay).
 async function capture(session, quad = null) {
   const video = document.getElementById("cam");
   const msg = document.getElementById("scan-msg");
@@ -327,22 +362,31 @@ async function capture(session, quad = null) {
   btn.disabled = true;
   msg.textContent = "Đang chụp…";
   try {
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-    let blob = null;
-    if (quad) {
-      try { blob = await warpToPaper(canvas, quad); } catch (e) { console.warn(e); }
+    let best = null;
+    const shots = quad ? 2 : 1;
+    for (let i = 0; i < shots; i++) {
+      if (i > 0) await wait(300);
+      // Khi có 4 ô, giữ nguyên độ phân giải gốc để toạ độ 4 ô khớp với khung
+      const canvas = grabFrame(video, quad ? Infinity : MAX_SAVE_H);
+      if (quad) {
+        try {
+          const r = await warpToPaper(canvas, quad);
+          if (!best || r.sharp > best.sharp) best = r;
+        } catch (e) { console.warn(e); }
+      } else {
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", SAVE_QUALITY));
+        best = { blob, sharp: 0 };
+      }
     }
-    if (!blob) blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
-    if (!blob) throw new Error("Không tạo được ảnh từ camera");
+    if (!best && quad) best = await captureFallback(video);
+    if (!best || !best.blob) throw new Error("Không tạo được ảnh từ camera");
     const id = newId();
     await queue.put({
       id, name: `${session.id}__${Date.now()}__${id.slice(0, 8)}.jpg`, mime: "image/jpeg",
-      blob, sessionId: session.id, createdAt: Date.now(),
+      folder: session.folder, blob: best.blob, sessionId: session.id, createdAt: Date.now(),
     });
-    msg.innerHTML = `<span class="ok">Đã chụp${quad ? " (đã cắt theo 4 ô)" : ""}. Đưa phiếu tiếp theo vào khung.</span>`;
+    const sharpNote = quad ? ` · độ nét ${Math.round(best.sharp)}` : "";
+    msg.innerHTML = `<span class="ok">Đã chụp${quad ? " (đã cắt theo 4 ô" + sharpNote + ")" : ""}. Đưa phiếu tiếp theo vào khung.</span>`;
     refreshCounts();
     sendQueue();
   } catch (e) {
@@ -351,6 +395,13 @@ async function capture(session, quad = null) {
   } finally {
     btn.disabled = false;
   }
+}
+
+// Khi không nắn được phối cảnh: lưu nguyên khung camera
+async function captureFallback(video) {
+  const canvas = grabFrame(video, MAX_SAVE_H);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", SAVE_QUALITY));
+  return { blob, sharp: 0 };
 }
 
 function renderConnect() {

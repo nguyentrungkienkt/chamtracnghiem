@@ -29,3 +29,8 @@
 
 ## Lưu ý
 Repo này công khai. Không commit URL relay, mã truy cập, đáp án thật hay ảnh phiếu thật.
+
+## Thư mục trên Drive
+- Mỗi người chấm có một thư mục theo tên trong `CODES`.
+- Mỗi phiên có một thư mục con trong thư mục đó, tên dạng `Tên phiên [6 ký tự id]`. Ảnh và file `phien_<id>.json` nằm trong thư mục phiên.
+- Sau khi sửa `relay/Code.gs`, phải triển khai phiên bản mới (Deploy → Manage deployments → Edit → New version) thì thay đổi mới có hiệu lực.

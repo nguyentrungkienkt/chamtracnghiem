@@ -37,25 +37,37 @@ function detect(img) {
 }
 
 // quad: bốn góc theo thứ tự tl, tr, br, bl (toạ độ ảnh gốc). Nới 4% từ tâm để giữ trọn mép phiếu.
-function warp(img, quad) {
+// maxH: chiều cao tối đa của ảnh kết quả. Trả về thêm độ nét (phương sai của Laplacian).
+function warp(img, quad, maxH) {
   const cv = self.cv;
   const cx = quad.reduce((a, p) => a + p.x, 0) / 4;
   const cy = quad.reduce((a, p) => a + p.y, 0) / 4;
   const EXPAND = 1.04;
   const [tl, tr, br, bl] = quad.map((p) => ({ x: cx + (p.x - cx) * EXPAND, y: cy + (p.y - cy) * EXPAND }));
   const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  const W = Math.round(Math.max(dist(tl, tr), dist(bl, br)));
-  const H = Math.round(Math.max(dist(tl, bl), dist(tr, br)));
+  const W0 = Math.max(dist(tl, tr), dist(bl, br));
+  const H0 = Math.max(dist(tl, bl), dist(tr, br));
+  const k = Math.min(1, maxH / H0);
+  const W = Math.round(W0 * k), H = Math.round(H0 * k);
   const src = cv.matFromImageData(img);
   const srcQ = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
   const dstQ = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, W, 0, W, H, 0, H]);
   const T = cv.getPerspectiveTransform(srcQ, dstQ);
   const dst = new cv.Mat();
+  const gray = new cv.Mat();
+  const lap = new cv.Mat();
+  const mean = new cv.Mat();
+  const sd = new cv.Mat();
   try {
-    cv.warpPerspective(src, dst, T, new cv.Size(W, H), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
-    return { w: W, h: H, data: new Uint8ClampedArray(dst.data) };
+    cv.warpPerspective(src, dst, T, new cv.Size(W, H), cv.INTER_AREA, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
+    cv.cvtColor(dst, gray, cv.COLOR_RGBA2GRAY);
+    cv.Laplacian(gray, lap, cv.CV_64F);
+    cv.meanStdDev(lap, mean, sd);
+    const sharp = sd.data64F[0] * sd.data64F[0];
+    return { w: W, h: H, sharp, data: new Uint8ClampedArray(dst.data) };
   } finally {
     src.delete(); srcQ.delete(); dstQ.delete(); T.delete(); dst.delete();
+    gray.delete(); lap.delete(); mean.delete(); sd.delete();
   }
 }
 
@@ -66,7 +78,7 @@ self.onmessage = (e) => {
     if (op === "detect") {
       self.postMessage({ id, ...detect(e.data.img) });
     } else if (op === "warp") {
-      const r = warp(e.data.img, e.data.quad);
+      const r = warp(e.data.img, e.data.quad, e.data.maxH);
       self.postMessage({ id, ...r }, [r.data.buffer]);
     }
   } catch (err) {

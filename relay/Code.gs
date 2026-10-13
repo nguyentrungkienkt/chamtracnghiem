@@ -21,11 +21,15 @@ function doPost(e) {
     var person = authenticate_(req.code);
     if (!person) return json_({ ok: false, error: 'unauthorized' });
 
-    var folder = personFolder_(person);
+    var base = personFolder_(person);
+    // Mỗi phiên có thư mục con riêng trong thư mục của người chấm
+    var folder = req.folder ? subFolder_(base, req.folder) : base;
 
     switch (req.action) {
       case 'ping':
         return json_({ ok: true, person: person });
+      case 'mkdir':
+        return json_({ ok: true, id: folder.getId(), name: folder.getName() });
       case 'upload':
         return json_(uploadFile_(folder, req));
       case 'list':
@@ -62,6 +66,12 @@ function personFolder_(person) {
   var name = sanitize_(person);
   var it = root.getFoldersByName(name);
   return it.hasNext() ? it.next() : root.createFolder(name);
+}
+
+function subFolder_(base, name) {
+  var clean = sanitize_(name);
+  var it = base.getFoldersByName(clean);
+  return it.hasNext() ? it.next() : base.createFolder(clean);
 }
 
 function sanitize_(name) {

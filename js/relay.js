@@ -50,7 +50,8 @@ export function ping() {
   return call("ping");
 }
 
-export async function uploadBlob(blob, name, mime) {
+// folder: tên thư mục phiên (tạo nếu chưa có) trong thư mục của người chấm
+export async function uploadBlob(blob, name, mime, folder) {
   const data = await blobToBase64(blob);
-  return call("upload", { name, mime, data });
+  return call("upload", { name, mime, data, folder });
 }
