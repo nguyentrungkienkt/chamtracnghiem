@@ -2,7 +2,6 @@
 // Điện thoại không chấm. Việc chấm và kiểm tra làm trên máy Windows.
 import { queue, newId } from "./db.js";
 import { getConfig, saveConfig, clearConfig, ping, uploadBlob } from "./relay.js";
-import { candidateSquares, outerCorners, toGray } from "./corners.js";
 
 // Loại phiếu. Chỉ khai báo tên và mã; hình học và đáp án do máy Windows quản lý.
 const SHEET_TYPES = {
@@ -19,7 +18,8 @@ const state = { tab: "phien", sessionId: null, stream: null, sending: false, det
 const STEADY_MS = 3000;
 const COOLDOWN_MS = 3000;
 const MOVE_TOL = 0.01;
-const DETECT_W = 640;
+const DETECT_W = 480;
+const DETECT_TIMEOUT_MS = 8000;
 const DETECT_EVERY_MS = 300;
 
 /* ---------- phiên (lưu trên máy này) ---------- */
@@ -157,26 +157,6 @@ function renderScan() {
   refreshCounts();
 }
 
-let cvPromise = null;
-// Nạp OpenCV.js trên trang để dò 4 ô vuông. File khoảng 10 MB, chỉ nạp một lần.
-function loadOpenCv() {
-  if (!cvPromise) {
-    cvPromise = new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js";
-      s.async = true;
-      s.onload = () => {
-        const t = setInterval(() => {
-          if (window.cv && window.cv.Mat) { clearInterval(t); resolve(window.cv); }
-        }, 100);
-      };
-      s.onerror = () => { cvPromise = null; reject(new Error("Không tải được OpenCV.js")); };
-      document.head.appendChild(s);
-    });
-  }
-  return cvPromise;
-}
-
 async function startCamera(session) {
   const video = document.getElementById("cam");
   const msg = document.getElementById("cam-msg");
@@ -193,15 +173,8 @@ async function startCamera(session) {
     msg.innerHTML = `<span class="err">Không mở được camera. Kiểm tra quyền camera của trình duyệt.</span>`;
     return;
   }
-  msg.textContent = "Đang nạp bộ nhận diện… Bấm Chụp nếu cần chụp tay.";
-  try {
-    await loadOpenCv();
-    msg.textContent = "Đưa phiếu vào khung. Khi thấy đủ 4 ô vuông và phiếu đứng yên 3 giây, app tự chụp.";
-    startDetect(session);
-  } catch (e) {
-    console.warn(e);
-    msg.innerHTML = `<span class="err">Không nạp được bộ nhận diện: ${esc(e.message)}. Vẫn có thể bấm Chụp bằng tay.</span>`;
-  }
+  msg.textContent = "Đang nạp bộ nhận diện… Có thể bấm Chụp tay trong lúc chờ.";
+  startDetect(session);
 }
 
 function stopCamera() {
@@ -212,100 +185,134 @@ function stopCamera() {
   }
 }
 
+function setHint(html) {
+  const el = document.getElementById("cam-msg");
+  if (el) el.innerHTML = html;
+}
+
+// Bộ nhận diện chạy trong luồng nền (js/detect-worker.js). Gửi yêu cầu, nhận kết quả theo id.
 function startDetect(session) {
   stopDetect();
-  state.detect = { timer: null, lastPts: null, since: 0, cooldownUntil: 0, busy: false };
-  state.detect.timer = setInterval(() => detectTick(session), DETECT_EVERY_MS);
+  const worker = new Worker("./js/detect-worker.js");
+  const d = {
+    worker, session, seq: 0, waiting: new Map(), ready: false, busy: false,
+    timer: null, lastPts: null, since: 0, cooldownUntil: 0,
+  };
+  state.detect = d;
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === "ready") {
+      d.ready = true;
+      setHint("Đưa phiếu vào khung. Khi thấy đủ 4 ô vuông và phiếu đứng yên 3 giây, app tự chụp.");
+      return;
+    }
+    if (m.type === "error") {
+      setHint(`<span class="err">Không nạp được bộ nhận diện: ${esc(m.text)}. Vẫn có thể bấm Chụp bằng tay.</span>`);
+      return;
+    }
+    const w = d.waiting.get(m.id);
+    if (!w) return;
+    d.waiting.delete(m.id);
+    if (m.error) w.reject(new Error(m.error)); else w.resolve(m);
+  };
+  worker.onerror = (e) => {
+    console.warn(e);
+    setHint(`<span class="err">Bộ nhận diện gặp lỗi. Vẫn có thể bấm Chụp bằng tay.</span>`);
+  };
+  d.timer = setInterval(() => detectTick(), DETECT_EVERY_MS);
 }
 
 function stopDetect() {
-  if (state.detect && state.detect.timer) clearInterval(state.detect.timer);
+  const d = state.detect;
+  if (!d) return;
+  clearInterval(d.timer);
+  d.worker.terminate();
+  d.waiting.forEach((w) => w.reject(new Error("Đã dừng")));
+  d.waiting.clear();
   state.detect = null;
 }
 
-// Mỗi lượt: dò 4 ô vuông trên khung hình nhỏ. Nếu đủ 4 ô và không dịch chuyển trong STEADY_MS thì tự chụp.
+function detectorCall(op, payload, transfer = []) {
+  const d = state.detect;
+  if (!d) return Promise.reject(new Error("Bộ nhận diện chưa chạy"));
+  const id = ++d.seq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      d.waiting.delete(id);
+      reject(new Error("Xử lý quá lâu"));
+    }, DETECT_TIMEOUT_MS);
+    d.waiting.set(id, {
+      resolve: (v) => { clearTimeout(timer); resolve(v); },
+      reject: (err) => { clearTimeout(timer); reject(err); },
+    });
+    d.worker.postMessage({ id, op, ...payload }, transfer);
+  });
+}
+
+// Mỗi lượt: gửi khung nhỏ cho luồng nền dò 4 ô. Nếu đủ 4 ô và không dịch chuyển trong STEADY_MS thì tự chụp.
 // Sau khi chụp, nghỉ COOLDOWN_MS để người chấm thay phiếu khác.
-function detectTick(session) {
+async function detectTick() {
   const d = state.detect;
   const video = document.getElementById("cam");
-  const hint = document.getElementById("cam-msg");
-  if (!d || !video || !video.videoWidth || d.busy || !window.cv) return;
+  if (!d || !d.ready || d.busy || !video || !video.videoWidth) return;
   const now = Date.now();
   if (now < d.cooldownUntil) {
-    hint.textContent = `Thay phiếu khác… ${Math.ceil((d.cooldownUntil - now) / 1000)} giây`;
+    setHint(`Thay phiếu khác… ${Math.ceil((d.cooldownUntil - now) / 1000)} giây`);
     return;
   }
-  const cv = window.cv;
   const w = DETECT_W;
   const h = Math.round(video.videoHeight * DETECT_W / video.videoWidth);
   const small = document.createElement("canvas");
   small.width = w;
   small.height = h;
-  small.getContext("2d").drawImage(video, 0, 0, w, h);
-  let rgba = null, gray = null;
+  const ctx = small.getContext("2d");
+  ctx.drawImage(video, 0, 0, w, h);
+  const img = ctx.getImageData(0, 0, w, h);
+  d.busy = true;
+  let res;
   try {
-    rgba = cv.imread(small);
-    gray = toGray(cv, rgba);
-    const corners = outerCorners(candidateSquares(cv, gray), gray.cols);
-    if (!corners) {
-      d.lastPts = null;
-      d.since = 0;
-      hint.textContent = "Đưa phiếu vào khung, cần thấy đủ 4 ô vuông.";
-      return;
-    }
-    const pts = [corners.tl, corners.tr, corners.br, corners.bl];
-    const moved = d.lastPts
-      ? Math.max(...pts.map((p, i) => Math.hypot(p.x - d.lastPts[i].x, p.y - d.lastPts[i].y)))
-      : Infinity;
-    if (moved > MOVE_TOL * w || !d.since) d.since = now;
-    d.lastPts = pts;
-    const held = now - d.since;
-    if (held >= STEADY_MS) {
-      d.busy = true;
-      d.since = 0;
-      d.lastPts = null;
-      d.cooldownUntil = now + COOLDOWN_MS;
-      hint.textContent = "Đã nhận đủ 4 ô, đang chụp…";
-      const fullPts = pts.map((p) => ({
-        x: p.x * video.videoWidth / w,
-        y: p.y * video.videoHeight / h,
-      }));
-      capture(session, fullPts).finally(() => { d.busy = false; });
-    } else {
-      hint.textContent = `Đã thấy 4 ô. Giữ yên ${Math.ceil((STEADY_MS - held) / 1000)} giây…`;
-    }
+    res = await detectorCall("detect", { img }, [img.data.buffer]);
   } catch (e) {
     console.warn(e);
+    return;
   } finally {
-    if (rgba) rgba.delete();
-    if (gray) gray.delete();
+    d.busy = false;
+  }
+  if (state.detect !== d) return; // đã dừng trong lúc chờ
+  if (!res.corners) {
+    d.lastPts = null;
+    d.since = 0;
+    setHint(`Đưa phiếu vào khung, cần thấy đủ 4 ô vuông. (đang thấy ${res.count} ô vuông)`);
+    return;
+  }
+  const pts = res.corners;
+  const t = Date.now();
+  const moved = d.lastPts
+    ? Math.max(...pts.map((p, i) => Math.hypot(p.x - d.lastPts[i].x, p.y - d.lastPts[i].y)))
+    : Infinity;
+  if (moved > MOVE_TOL * w || !d.since) d.since = t;
+  d.lastPts = pts;
+  const held = t - d.since;
+  if (held >= STEADY_MS) {
+    d.since = 0;
+    d.lastPts = null;
+    d.cooldownUntil = t + COOLDOWN_MS;
+    const full = pts.map((p) => ({ x: p.x * video.videoWidth / w, y: p.y * video.videoHeight / h }));
+    setHint("Đã nhận đủ 4 ô, đang chụp…");
+    capture(d.session, full);
+  } else {
+    setHint(`Đã thấy 4 ô. Giữ yên ${Math.ceil((STEADY_MS - held) / 1000)} giây…`);
   }
 }
 
-// Nắn phối cảnh phần trong bốn ô định vị ra ảnh chữ nhật, chỉ giữ phiếu.
-// quad: bốn góc (tâm các ô vuông) theo thứ tự tl, tr, br, bl, theo toạ độ ảnh gốc.
-// Nới ra 4% từ tâm để giữ trọn mép phiếu quanh các ô.
+// Nắn phối cảnh phần trong bốn ô định vị (chạy trong luồng nền). Trả về Blob JPEG.
 async function warpToPaper(canvas, quad) {
-  const cv = window.cv;
-  const cx = quad.reduce((a, p) => a + p.x, 0) / 4;
-  const cy = quad.reduce((a, p) => a + p.y, 0) / 4;
-  const EXPAND = 1.04;
-  const [tl, tr, br, bl] = quad.map((p) => ({ x: cx + (p.x - cx) * EXPAND, y: cy + (p.y - cy) * EXPAND }));
-  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  const W = Math.round(Math.max(dist(tl, tr), dist(bl, br)));
-  const H = Math.round(Math.max(dist(tl, bl), dist(tr, br)));
-  const src = cv.imread(canvas);
-  const srcQ = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
-  const dstQ = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, W, 0, W, H, 0, H]);
-  const M = cv.getPerspectiveTransform(srcQ, dstQ);
-  const dst = new cv.Mat();
+  const img = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+  const r = await detectorCall("warp", { img, quad }, [img.data.buffer]);
   const out = document.createElement("canvas");
-  try {
-    cv.warpPerspective(src, dst, M, new cv.Size(W, H), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
-    cv.imshow(out, dst);
-  } finally {
-    src.delete(); srcQ.delete(); dstQ.delete(); M.delete(); dst.delete();
-  }
+  out.width = r.w;
+  out.height = r.h;
+  out.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(r.data), r.w, r.h), 0, 0);
   return new Promise((resolve) => out.toBlob(resolve, "image/jpeg", 0.9));
 }
 
@@ -335,7 +342,7 @@ async function capture(session, quad = null) {
       id, name: `${session.id}__${Date.now()}__${id.slice(0, 8)}.jpg`, mime: "image/jpeg",
       blob, sessionId: session.id, createdAt: Date.now(),
     });
-    msg.innerHTML = `<span class="ok">Đã chụp. Đưa phiếu tiếp theo vào khung.</span>`;
+    msg.innerHTML = `<span class="ok">Đã chụp${quad ? " (đã cắt theo 4 ô)" : ""}. Đưa phiếu tiếp theo vào khung.</span>`;
     refreshCounts();
     sendQueue();
   } catch (e) {

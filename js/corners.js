@@ -94,7 +94,7 @@ export function candidateSquares(cv, gray) {
 }
 
 function squaresFrom(cv, bin, w) {
-  const minSide = 0.008 * w, maxSide = 0.08 * w;
+  const minSide = 0.004 * w, maxSide = 0.15 * w;
   const contours = new cv.MatVector();
   const hier = new cv.Mat();
   cv.findContours(bin, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
