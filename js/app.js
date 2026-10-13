@@ -17,6 +17,7 @@ const state = { tab: "phien", sessionId: null, stream: null, sending: false, det
 // Thời gian giữ yên để tự chụp, thời gian nghỉ để thay phiếu, và độ dịch chuyển coi là đứng yên
 const STEADY_MS = 3000;
 const COOLDOWN_MS = 3000;
+const DARK_MEAN = 45;     // độ sáng trung bình (0..255) dưới ngưỡng này: khung quá tối, không chụp
 const MOVE_TOL = 0.03;   // dịch chuyển tối đa (theo chiều rộng khung) so với vị trí lúc bắt đầu giữ
 const DETECT_W = 480;
 const DETECT_TIMEOUT_MS = 8000;
@@ -192,6 +193,7 @@ async function openCamera(deviceId) {
 }
 
 async function startCamera(session) {
+  state.scanSession = session;
   const video = document.getElementById("cam");
   const msg = document.getElementById("cam-msg");
   const btn = document.getElementById("btn-shot");
@@ -234,6 +236,22 @@ function stopCamera() {
     state.stream = null;
   }
 }
+
+// Tắt màn hình hoặc chuyển app: dừng camera và bộ dò để không tự chụp khung đen/nền ngoài.
+// Quay lại app: mở lại camera nếu vẫn đang ở màn hình quét.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (state.stream || state.detect) {
+      stopCamera();
+      const msg = document.getElementById("cam-msg");
+      if (msg) msg.textContent = "Đã tạm dừng khi rời app. Quay lại app để tiếp tục quét.";
+      state.resumeScan = true;
+    }
+  } else if (state.resumeScan && state.scanSession) {
+    state.resumeScan = false;
+    if (document.getElementById("cam")) startCamera(state.scanSession);
+  }
+});
 
 function setHint(html) {
   const el = document.getElementById("cam-msg");
@@ -318,6 +336,16 @@ async function detectTick() {
   const ctx = small.getContext("2d");
   ctx.drawImage(video, 0, 0, w, h);
   const img = ctx.getImageData(0, 0, w, h);
+  const px = img.data;
+  let sum = 0;
+  for (let i = 0; i < px.length; i += 16) sum += px[i] + px[i + 1] + px[i + 2];
+  const meanLight = sum / ((px.length / 16) * 3);
+  if (meanLight < DARK_MEAN) {
+    d.since = 0;
+    d.anchor = null;
+    setHint("Ánh sáng quá tối. Bật đèn hoặc đưa phiếu ra chỗ sáng hơn.");
+    return;
+  }
   d.busy = true;
   let res;
   try {
@@ -415,6 +443,7 @@ async function capture(session, quad = null) {
     }
     if (!best && quad) best = await captureFallback(video);
     if (!best || !best.blob) throw new Error("Không tạo được ảnh từ camera");
+    if (document.hidden) { msg.textContent = "Đã hủy ảnh vì app đang ở nền."; return; }
     const id = newId();
     await queue.put({
       id, name: `${session.id}__${Date.now()}__${id.slice(0, 8)}.jpg`, mime: "image/jpeg",
