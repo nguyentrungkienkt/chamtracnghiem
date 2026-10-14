@@ -9,6 +9,7 @@ import { getConfig, saveConfig, clearConfig, ping, uploadBlob } from "./relay.js
 const SHEET_TYPES = {
   cv1239_redesign: { name: "CV1239 - mẫu thiết kế lại" },
   cv1239_bo: { name: "CV1239 - mẫu của Bộ" },
+  ttk_v1: { name: "Mẫu tự thiết kế v1 (40/6/6)" },
 };
 const DEFAULT_SHEET_TYPE = "cv1239_redesign";
 
