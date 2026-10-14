@@ -366,7 +366,9 @@ async function detectTick() {
     d.lastPts = null;
     d.anchor = null;
     d.since = 0;
-    setHint(`Đưa phiếu vào khung, cần thấy đủ 4 ô vuông. (đang thấy ${res.count} ô vuông)`);
+    // Không hiện số ô vuông: phiếu có nhiều ô vuông bên trong (SBD, mã đề, phần III) nên con số dễ gây hiểu nhầm
+    console.debug("square candidates:", res.count);
+    setHint("Đưa phiếu vào khung, cần thấy đủ 4 ô vuông ở bốn góc phiếu.");
     return;
   }
   const pts = res.corners;
