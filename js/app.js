@@ -7,11 +7,11 @@ import { getConfig, saveConfig, clearConfig, ping, uploadBlob } from "./relay.js
 // Chỉ liệt kê phiếu tự thiết kế theo công văn 1239 (hai mẫu đang lưu hành).
 // Phiên cũ có loại khác vẫn hiển thị được nhưng không chọn được nữa.
 const SHEET_TYPES = {
-  cv1239_redesign: { name: "CV1239 - mẫu thiết kế lại" },
-  cv1239_bo: { name: "CV1239 - mẫu của Bộ" },
-  ttk_v1: { name: "Mẫu tự thiết kế v1 (40/6/6)" },
+  cv1239_bo: { name: "Mẫu bộ giáo dục" },
+  cv1239_redesign: { name: "Mẫu thiết kế 1239" },
+  ttk_v1: { name: "Mẫu phiếu chấm TN v1" },
 };
-const DEFAULT_SHEET_TYPE = "cv1239_redesign";
+const DEFAULT_SHEET_TYPE = "ttk_v1";
 
 const SESSIONS_KEY = "chamtn.sessions";
 const view = document.getElementById("view");
