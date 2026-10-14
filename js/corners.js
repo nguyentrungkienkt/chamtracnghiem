@@ -135,6 +135,11 @@ export function outerCorners(cands, w) {
   const br = cands.reduce((a, b) => (b.x + b.y > a.x + a.y ? b : a));
   const bl = cands.reduce((a, b) => (b.y - b.x > a.y - a.x ? b : a));
   if (new Set([tr, br, bl]).size < 3) return null;
+  // Dấu góc to hơn vạch chỉ hướng (khoảng 36 px so với 22 px trên khung chuẩn). Nếu ba dấu góc
+  // chênh nhau quá nhiều thì một góc đã bị lấy nhầm vạch chỉ hướng (góc bị khuất khỏi khung).
+  // Khi đó không dùng 4 ô, để nút Chụp chụp toàn khung thay vì cắt sai phiếu.
+  const sides = [tr.side, br.side, bl.side];
+  if (Math.min(...sides) < 0.75 * Math.max(...sides)) return null;
   const tl = topLeftFrom(cands, tr, br, bl, TL_TOL * w);
   return { tl, tr, br, bl };
 }
