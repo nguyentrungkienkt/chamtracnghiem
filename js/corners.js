@@ -93,6 +93,17 @@ export function candidateSquares(cv, gray) {
   return out;
 }
 
+// Đa giác xấp xỉ của contour có đúng 4 đỉnh và lồi (ô vuông/bình hành), không phải hình tròn.
+function isQuad(cv, c) {
+  const approx = new cv.Mat();
+  try {
+    cv.approxPolyDP(c, approx, 0.04 * cv.arcLength(c, true), true);
+    return approx.rows === 4 && cv.isContourConvex(approx);
+  } finally {
+    approx.delete();
+  }
+}
+
 function squaresFrom(cv, bin, w) {
   const minSide = 0.004 * w, maxSide = 0.15 * w;
   const contours = new cv.MatVector();
@@ -106,8 +117,10 @@ function squaresFrom(cv, bin, w) {
       const rect = cv.minAreaRect(c);
       const rw = rect.size.width, rh = rect.size.height;
       const okSize = rw > 0 && rh > 0 && rw >= minSide && rw <= maxSide && rh >= minSide && rh <= maxSide;
-      const okRatio = okSize && rw / rh >= 0.8 && rw / rh <= 1.25;
-      if (okRatio && area / (rw * rh) >= 0.85) out.push({ x: rect.center.x, y: rect.center.y, side: (rw + rh) / 2 });
+      // Ảnh chụp nghiêng làm ô góc bị dẹt (tỷ lệ cạnh tới ~1.5, độ đặc ~0.8), nên nới tiêu chí.
+      // Bubble tròn bị loại nhờ kiểm tra 4 đỉnh lồi (hình tròn có nhiều đỉnh).
+      const okRatio = okSize && rw / rh >= 0.6 && rw / rh <= 1.6;
+      if (okRatio && area / (rw * rh) >= 0.78 && isQuad(cv, c)) out.push({ x: rect.center.x, y: rect.center.y, side: (rw + rh) / 2 });
     }
     c.delete();
   }
